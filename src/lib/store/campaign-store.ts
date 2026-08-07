@@ -634,35 +634,65 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     if (!campaign) return 0;
     set({ busy: true, error: null });
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/pdf-ingest", { method: "POST", body: form });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Échec lecture PDF");
-      }
-      const data = (await res.json()) as {
-        chunks: Array<string | { text: string; audience?: PdfChunk["audience"] }>;
-      };
-      await db.pdfChunks.where("campaignId").equals(campaign.id).delete();
-      const rows: PdfChunk[] = data.chunks.map((item, index) => {
-        if (typeof item === "string") {
-          return {
-            id: nanoid(),
-            campaignId: campaign.id,
-            text: item,
-            index,
-            audience: "general",
+      // Extract in the browser first — Vercel serverless often fails on PDF workers / size limits.
+      let chunks: Array<{ text: string; audience?: PdfChunk["audience"] }> | null =
+        null;
+      try {
+        const { extractText, getDocumentProxy } = await import("unpdf");
+        const data = new Uint8Array(await file.arrayBuffer());
+        const pdf = await getDocumentProxy(data);
+        const extracted = await extractText(pdf, { mergePages: true });
+        const fullText = (
+          Array.isArray(extracted.text)
+            ? extracted.text.join("\n\n")
+            : extracted.text || ""
+        ).trim();
+        if (!fullText) throw new Error("Aucun texte extractible dans ce PDF");
+        const { classifyScenarioText } = await import("@/lib/rag/classify");
+        chunks = classifyScenarioText(fullText);
+      } catch (clientErr) {
+        console.warn("pdf client extract failed, trying API", clientErr);
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/pdf-ingest", {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as {
+            error?: string;
           };
+          throw new Error(
+            err.error ||
+              (clientErr instanceof Error
+                ? clientErr.message
+                : "Échec lecture PDF"),
+          );
         }
-        return {
-          id: nanoid(),
-          campaignId: campaign.id,
-          text: item.text,
-          index,
-          audience: item.audience ?? "general",
+        const data = (await res.json()) as {
+          chunks: Array<
+            string | { text: string; audience?: PdfChunk["audience"] }
+          >;
         };
-      });
+        chunks = data.chunks.map((item) =>
+          typeof item === "string"
+            ? { text: item, audience: "general" as const }
+            : item,
+        );
+      }
+
+      if (!chunks?.length) {
+        throw new Error("Aucun texte extractible dans ce PDF");
+      }
+
+      await db.pdfChunks.where("campaignId").equals(campaign.id).delete();
+      const rows: PdfChunk[] = chunks.map((item, index) => ({
+        id: nanoid(),
+        campaignId: campaign.id,
+        text: item.text,
+        index,
+        audience: item.audience ?? "general",
+      }));
       await db.pdfChunks.bulkAdd(rows);
 
       set({ pdfChunks: rows });

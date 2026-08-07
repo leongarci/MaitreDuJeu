@@ -4,8 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CharacterDrawer } from "@/components/character/CharacterDrawer";
 import { DiceModal } from "@/components/dice/DiceModal";
-import { GmCapabilitiesHelp } from "@/components/help/GmCapabilitiesHelp";
-import { GraphPanel } from "@/components/session/GraphPanel";
 import { useDeviceMode } from "@/hooks/useDeviceMode";
 import { getLastTtsError } from "@/lib/client/tts";
 import { unlockAudio } from "@/lib/client/tts-local";
@@ -23,12 +21,9 @@ export function SessionView({ campaignId }: Props) {
     characters,
     messages,
     scenarioBeats,
-    graphNodes,
-    graphEdges,
     busy,
     error,
     sceneUrl,
-    syncStatus,
     loadCampaign,
     setActiveCharacter,
     setTtsMuted,
@@ -43,14 +38,12 @@ export function SessionView({ campaignId }: Props) {
     mergeParty,
     resolvePendingCheck,
     setScenarioCursor,
-    pushCampaignSync,
     pullCampaignSync,
   } = useCampaignStore();
 
   const [text, setText] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [graphOpen, setGraphOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [splitLabel, setSplitLabel] = useState("");
   const [splitHint, setSplitHint] = useState("");
@@ -132,67 +125,51 @@ export function SessionView({ campaignId }: Props) {
   return (
     <div className="app-shell relative h-[100dvh] overflow-hidden">
       <header className="z-10 border-b border-line bg-ink/70 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur-md">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <Link href="/" className="text-xs text-parchment-dim">
+        <div className="mb-2 flex items-center gap-2">
+          <Link href="/" className="shrink-0 text-xs text-parchment-dim">
             ← Accueil
           </Link>
-          <h1 className="font-display truncate text-base text-parchment">
+          <h1 className="font-display min-w-0 flex-1 truncate text-base text-parchment">
             {campaign.title}
           </h1>
-          <button
-            type="button"
-            className="btn btn-ghost px-2 py-1 text-xs"
-            onClick={() => setMode(mode === "mobile" ? "desktop" : "mobile")}
-            title="Mode tel / PC"
-          >
-            {isDesktop ? "PC" : "Tel"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost px-2 py-1 text-xs"
-            onClick={() => void setTtsMuted(!campaign.ttsMuted)}
-            title="Couper/rétablir la voix du MJ"
-          >
-            {campaign.ttsMuted ? "TTS off" : "TTS on"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost px-2 py-1 text-xs"
-            onClick={() => setGraphOpen(true)}
-          >
-            Graphe
-          </button>
-        </div>
-
-        <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-parchment-dim">
           {campaign.joinCode && (
-            <span className="rounded-full border border-line px-2 py-0.5 text-amber">
-              Code {campaign.joinCode}
+            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] text-amber">
+              {campaign.joinCode}
             </span>
           )}
           <button
             type="button"
-            className="btn btn-ghost px-2 py-0.5 text-[11px]"
-            onClick={() => void pushCampaignSync()}
+            className="btn btn-ghost shrink-0 px-2 py-1 text-xs"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-expanded={menuOpen}
+            title="Options"
           >
-            Sync ↑
+            {menuOpen ? "Fermer" : "Menu"}
           </button>
-          <button
-            type="button"
-            className="btn btn-ghost px-2 py-0.5 text-[11px]"
-            onClick={() => void pullCampaignSync()}
-          >
-            Sync ↓
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost px-2 py-0.5 text-[11px]"
-            onClick={() => setHelpOpen(true)}
-          >
-            Capacités MJ
-          </button>
-          {syncStatus && <span className="truncate text-amber/80">{syncStatus}</span>}
         </div>
+
+        {menuOpen && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-line/80 bg-ink/50 px-2 py-2">
+            <button
+              type="button"
+              className="btn btn-ghost px-2 py-1 text-xs"
+              onClick={() => setMode(mode === "mobile" ? "desktop" : "mobile")}
+              title="Mode tel / PC"
+            >
+              {isDesktop ? "Mode PC" : "Mode Tel"}
+            </button>
+            {isDesktop && (
+              <button
+                type="button"
+                className="btn btn-ghost px-2 py-1 text-xs"
+                onClick={() => void setTtsMuted(!campaign.ttsMuted)}
+                title="Couper/rétablir la voix du MJ"
+              >
+                {campaign.ttsMuted ? "TTS off" : "TTS on"}
+              </button>
+            )}
+          </div>
+        )}
 
         {groups.length > 1 && (
           <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -403,9 +380,6 @@ export function SessionView({ campaignId }: Props) {
                 Groupe : {activeGroup?.label || "—"}. Tours auto · actions
                 collectives à confirmation · séparation possible.
               </p>
-              <p>
-                Graphe : {graphNodes.length} nœuds · {graphEdges.length} liens
-              </p>
             </div>
           </aside>
         )}
@@ -615,14 +589,6 @@ export function SessionView({ campaignId }: Props) {
         />
       )}
 
-      <GraphPanel
-        open={graphOpen}
-        onClose={() => setGraphOpen(false)}
-        nodes={graphNodes}
-        edges={graphEdges}
-      />
-
-      <GmCapabilitiesHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

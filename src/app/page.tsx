@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { GmCapabilitiesHelp } from "@/components/help/GmCapabilitiesHelp";
 import { useDeviceMode } from "@/hooks/useDeviceMode";
 import { useCampaignStore } from "@/lib/store/campaign-store";
 import { speakTestSample } from "@/lib/client/tts";
@@ -15,7 +14,6 @@ export default function HomePage() {
   const {
     ready,
     campaigns,
-    syncStatus,
     error,
     initHome,
     deleteCampaign,
@@ -23,7 +21,6 @@ export default function HomePage() {
   } = useCampaignStore();
 
   const [joinCode, setJoinCode] = useState("");
-  const [helpOpen, setHelpOpen] = useState(false);
   const [ttsOk, setTtsOk] = useState<boolean | null>(null);
   const [ttsHint, setTtsHint] = useState<string | null>(null);
 
@@ -108,13 +105,6 @@ export default function HomePage() {
             >
               PC
             </button>
-            <button
-              type="button"
-              className="btn btn-ghost px-2 py-1 text-xs"
-              onClick={() => setHelpOpen(true)}
-            >
-              MJ ?
-            </button>
           </div>
         </div>
         <h1 className="font-display text-5xl leading-none text-parchment">
@@ -183,9 +173,6 @@ export default function HomePage() {
             OK
           </button>
         </div>
-        {syncStatus && (
-          <p className="text-xs text-amber">{syncStatus}</p>
-        )}
         {error && <p className="text-xs text-danger">{error}</p>}
       </section>
 
@@ -238,7 +225,6 @@ export default function HomePage() {
         </ul>
       </section>
 
-      <GmCapabilitiesHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

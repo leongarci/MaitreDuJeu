@@ -2,7 +2,8 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["pdf-parse"],
+  // unpdf / pdfjs for serverless PDF text extraction (Vercel)
+  serverExternalPackages: ["unpdf", "pdf-parse", "@napi-rs/canvas"],
   turbopack: {
     root: path.join(__dirname),
   },
