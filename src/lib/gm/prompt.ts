@@ -86,6 +86,22 @@ Si tout le monde est réuni: party_split avec UN seul groupe listant tous les no
 Sinon party_split=null.
 Interdit: inventer un prêt d'objet / une intervention entre sous-groupes séparés.
 
+## TOUR (consume_turn)
+consume_turn=true pour une vraie action fictionnelle (agir, parler en jeu, attaquer, fouiller…).
+consume_turn=false (NE PAS passer le tour) si:
+- le joueur pose une QUESTION au MJ (règles, "c'est quoi… ?", "est-ce que je peux… ?", précision OOC)
+- tu demandes une précision ("Comment fais-tu exactement ?") sans résoudre d'action
+- tu réponds seulement par de l'info perceptible sans que le PJ ait réellement agi
+Sinon true.
+
+## INVENTAIRE (inventory_updates) — OBLIGATOIRE quand l'histoire change les objets
+Dès qu'un PJ gagne, perd, donne, ramasse, jette, consomme ou échange un objet:
+- ajoute une entrée inventory_updates avec characterId (id=… des PERSONNAGES) OU characterName
+- add: objets obtenus (libellés courts, ex. "clé rouillée", "torche")
+- remove: objets retirés (libellé proche de l'inventaire actuel)
+Si rien ne change: inventory_updates=[]
+Ne raconte PAS un loot sans l'écrire aussi dans inventory_updates.
+
 JSON:
 {
   "narration": "string",
@@ -99,7 +115,9 @@ JSON:
   "advance_scenario": 0,
   "speech_lines": [{ "speaker": "narrator"|"pnj:Name"|"pj:Name", "text": "string" }],
   "ask_dialogue": null | { "fromCharacterId": "string", "to": "pnj:X"|"pj:Y"|"groupe", "prompt": "Que dis-tu à … ?" },
-  "party_split": null | { "reason": "string", "groups": [{ "label": "string", "characterNames": ["Nom"], "locationHint": "string" }] }
+  "party_split": null | { "reason": "string", "groups": [{ "label": "string", "characterNames": ["Nom"], "locationHint": "string" }] },
+  "consume_turn": true,
+  "inventory_updates": [{ "characterId": "string", "characterName": "string", "add": ["objet"], "remove": ["objet"] }]
 }`;
 }
 
@@ -193,7 +211,7 @@ ${lore}`;
   if (req.mode === "intro") {
     return `${shared}
 
-MODE: intro — propose_check=null, advance_scenario=0, party_split=null, UNE narration
+MODE: intro — propose_check=null, advance_scenario=0, party_split=null, consume_turn=false, inventory_updates=[], UNE narration
 Structure OBLIGATOIRE de la narration (dans cet ordre):
 1) MISE EN CONTEXTE DE L'UNIVERS — 2 à 4 phrases: ton / époque / genre (ex. médiéval réaliste, high fantasy, horreur moderne, SF, contemporain…). Base-toi sur le PDF, les battlements et la bible. Pas de spoilers d'intrigue.
 2) QUI SONT LES HÉROS — présente CHAQUE PJ nommé dans === PERSONNAGES === (nom + une accroche fidèle à la fiche / inventaire / contexte). Ils ne se connaissent pas forcément; dis ce qui est perceptible.
@@ -206,7 +224,7 @@ N'invente AUCUNE action des PJ. Ils n'ont encore rien fait. Ne brûle pas la sui
   if (req.mode === "relance") {
     return `${shared}
 
-MODE: relance manuelle — UNE narration, propose_check=null, advance_scenario=0
+MODE: relance manuelle — UNE narration, propose_check=null, advance_scenario=0, consume_turn=false, inventory_updates=[]
 Débloque sans inventer d'actions PJ. Relance: "Que faites-vous ?"
 Historique:
 ${history || "(début)"}`;
@@ -216,10 +234,11 @@ ${history || "(début)"}`;
     const r = req.checkResult;
     return `${shared}
 
-MODE: resolve_check — propose_check=null — UNE narration STOP
+MODE: resolve_check — propose_check=null, consume_turn=true — UNE narration STOP
 Action déclarée (SEULE source): "${r.actionContext}"
 Jet: ${r.attribute} DD${r.dc} total=${r.total} succès=${r.success} (raison jet: ${r.reason})
 Raconte UNIQUEMENT le résultat de cette action déclarée — succès ou échec.
+Si un objet est obtenu/perdu: inventory_updates OBLIGATOIRE.
 INTERDIT d'ajouter des gestes / un plan que le joueur n'a pas écrits.
 Regarde Notes MJ + Condition de passage: advance_scenario=1 seulement si la transition est clairement remplie par CE résultat ; sinon 0 + "Que faites-vous ?"
 Ne commence pas le battement suivant dans cette narration.
@@ -230,9 +249,11 @@ ${history || "(début)"}`;
   return `${shared}
 
 MODE: action — UNE narration STOP
-Action EXACTE de ${active?.name} (ne rien y ajouter): "${req.action}"
-Si vague / confirmation seule → demande "Comment fais-tu exactement ?" propose_check=null. N'invente aucun plan. advance_scenario=0.
-Si concrète → conséquences directes seulement, ou propose_check si risquée (reason = l'action du joueur).
+Message EXACT de ${active?.name} (ne rien y ajouter): "${req.action}"
+Si c'est une QUESTION au MJ / permission / info OOC → réponds brièvement, consume_turn=false, propose_check=null, advance_scenario=0, inventory_updates=[].
+Si vague / confirmation seule → demande "Comment fais-tu exactement ?" propose_check=null, consume_turn=false. N'invente aucun plan. advance_scenario=0.
+Si concrète → conséquences directes seulement, ou propose_check si risquée (reason = l'action du joueur), consume_turn=true.
+Objets gagnés/perdus → inventory_updates (characterId/name + add/remove).
 Juge le rythme via Notes MJ + Condition de passage du battement courant.
 advance_scenario=1 SEULEMENT si la transition est clairement remplie ; sinon 0 et "Que faites-vous ?"
 Ne raconte pas le battement suivant ici.

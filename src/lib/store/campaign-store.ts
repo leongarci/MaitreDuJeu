@@ -14,6 +14,7 @@ import { buildLorePack } from "@/lib/rag/retrieve";
 import { beatsForPrompt } from "@/lib/scenario/beats";
 import { gateAdvance } from "@/lib/scenario/advance";
 import {
+  isPlayerQuestionToGm,
   isVaguePlayerAction,
   VAGUE_ACTION_HINT,
 } from "@/lib/gm/action-guard";
@@ -48,6 +49,7 @@ import type {
   GmTurnResponse,
   GraphEdge,
   GraphNode,
+  InventoryUpdate,
   LoreEntry,
   LoreEntryDraft,
   Message,
@@ -1190,16 +1192,21 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     const group = ensured.campaign.partyGroups.find(
       (g) => g.id === ensured.campaign.activePartyGroupId,
     );
-    if (group?.actedThisRound.includes(activeId) && !campaign.pendingDialogue) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const isQuestion = isPlayerQuestionToGm(trimmed);
+    if (
+      group?.actedThisRound.includes(activeId) &&
+      !campaign.pendingDialogue &&
+      !isQuestion
+    ) {
       set({ error: "Ce personnage a déjà agi ce round." });
       return;
     }
 
-    const trimmed = text.trim();
-    if (!trimmed) return;
-
     const isDialogueReply = Boolean(campaign.pendingDialogue);
-    if (!isDialogueReply && isVaguePlayerAction(trimmed)) {
+    if (!isDialogueReply && !isQuestion && isVaguePlayerAction(trimmed)) {
       set({ error: VAGUE_ACTION_HINT });
       return;
     }
@@ -1553,9 +1560,53 @@ async function runGmActionTurn(
     throw new Error(err.error || "Le MJ ne répond pas");
   }
   const gm = (await res.json()) as GmTurnResponse;
+  const skipTurn =
+    gm.consume_turn === false || isPlayerQuestionToGm(labeled);
   await applyGmResponse(gm, labeled, leaderId, get, set, {
-    markActedIds: participantIds,
-    countsTowardBeat: true,
+    markActedIds: skipTurn ? [] : participantIds,
+    skipActedTracking: skipTurn,
+    countsTowardBeat: !skipTurn,
+  });
+}
+
+function itemKey(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+function removeInventoryItem(inv: string[], label: string): string[] {
+  const key = itemKey(label);
+  const exact = inv.findIndex((i) => itemKey(i) === key);
+  if (exact >= 0) return inv.filter((_, i) => i !== exact);
+  const fuzzy = inv.findIndex(
+    (i) => itemKey(i).includes(key) || key.includes(itemKey(i)),
+  );
+  if (fuzzy >= 0) return inv.filter((_, i) => i !== fuzzy);
+  return inv;
+}
+
+function applyInventoryUpdates(
+  characters: Character[],
+  updates: InventoryUpdate[],
+): Character[] {
+  if (!updates.length) return characters;
+  return characters.map((c) => {
+    const matched = updates.filter(
+      (u) =>
+        (u.characterId && u.characterId === c.id) ||
+        (u.characterName &&
+          u.characterName.trim().toLowerCase() === c.name.trim().toLowerCase()),
+    );
+    if (!matched.length) return c;
+    let inv = [...c.inventory];
+    for (const u of matched) {
+      for (const r of u.remove ?? []) inv = removeInventoryItem(inv, r);
+      for (const a of u.add ?? []) {
+        const label = a.trim();
+        if (!label) continue;
+        if (!inv.some((i) => itemKey(i) === itemKey(label))) inv.push(label);
+      }
+    }
+    return { ...c, inventory: inv };
   });
 }
 
@@ -1665,6 +1716,11 @@ async function applyGmResponse(
     const split = applyPartySplit(nextCampaign, nextCharacters, gm.party_split);
     nextCampaign = split.campaign;
     nextCharacters = split.characters;
+    for (const ch of nextCharacters) await db.characters.put(ch);
+  }
+
+  if (gm.inventory_updates?.length) {
+    nextCharacters = applyInventoryUpdates(nextCharacters, gm.inventory_updates);
     for (const ch of nextCharacters) await db.characters.put(ch);
   }
 

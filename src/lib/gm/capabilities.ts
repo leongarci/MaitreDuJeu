@@ -29,8 +29,21 @@ export const GM_CAPABILITIES: GmCapability[] = [
   {
     id: "ask_clarify",
     label: "Demande de précision",
-    description: "Demander comment le PJ agit exactement.",
-    when: "Action vague ou confirmation seule",
+    description: "Demander comment le PJ agit exactement (sans passer le tour).",
+    when: "Action vague ou confirmation seule — consume_turn=false",
+  },
+  {
+    id: "consume_turn",
+    label: "Consommer le tour",
+    description:
+      "false pour questions au MJ / précisions ; true pour une vraie action.",
+    when: "Chaque réponse action",
+  },
+  {
+    id: "inventory_updates",
+    label: "Inventaire",
+    description: "Ajouter/retirer des objets sur la fiche du PJ.",
+    when: "Loot, don, perte, consommation d’objet",
   },
   {
     id: "speech_lines",

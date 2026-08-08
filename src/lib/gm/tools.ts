@@ -3,6 +3,7 @@ import type {
   GmTurnResponse,
   GraphEdgeCategory,
   GraphNodeType,
+  InventoryUpdate,
   PartySplitUpdate,
   PendingDialogue,
   SpeechLine,
@@ -223,6 +224,41 @@ export function parseGmResponse(raw: string): GmTurnResponse {
     }
   }
 
+  const consume_turn =
+    typeof data.consume_turn === "boolean" ? data.consume_turn : true;
+
+  const inventory_updates: InventoryUpdate[] = [];
+  if (Array.isArray(data.inventory_updates)) {
+    for (const item of data.inventory_updates) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const characterId =
+        typeof row.characterId === "string" ? row.characterId.trim() : "";
+      const characterName =
+        typeof row.characterName === "string" ? row.characterName.trim() : "";
+      if (!characterId && !characterName) continue;
+      const add = Array.isArray(row.add)
+        ? row.add
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : [];
+      const remove = Array.isArray(row.remove)
+        ? row.remove
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : [];
+      if (!add.length && !remove.length) continue;
+      inventory_updates.push({
+        characterId: characterId || undefined,
+        characterName: characterName || undefined,
+        add: add.length ? add : undefined,
+        remove: remove.length ? remove : undefined,
+      });
+    }
+  }
+
   return {
     narration,
     propose_check,
@@ -233,5 +269,7 @@ export function parseGmResponse(raw: string): GmTurnResponse {
     speech_lines,
     ask_dialogue,
     party_split,
+    consume_turn,
+    inventory_updates,
   };
 }

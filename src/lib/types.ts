@@ -264,6 +264,14 @@ export interface PartySplitUpdate {
   reason?: string;
 }
 
+export interface InventoryUpdate {
+  /** Prefer characterId from PERSONNAGES; characterName as fallback. */
+  characterId?: string;
+  characterName?: string;
+  add?: string[];
+  remove?: string[];
+}
+
 export interface GmTurnResponse {
   narration: string;
   propose_check: {
@@ -282,6 +290,13 @@ export interface GmTurnResponse {
   ask_dialogue: PendingDialogue | null;
   /** Split or reunite the party into labeled groups. */
   party_split: PartySplitUpdate | null;
+  /**
+   * false = question / précision / meta — ne marque pas le PJ comme ayant agi.
+   * Default true when omitted.
+   */
+  consume_turn: boolean;
+  /** Add/remove items on character sheets when fiction changes inventory. */
+  inventory_updates: InventoryUpdate[];
 }
 
 export type StructuredBeatDraft = {
