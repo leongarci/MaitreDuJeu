@@ -44,123 +44,103 @@ export async function pushSnapshot(
     if (error) throw new Error(`${table}: ${error.message}`);
   };
 
-  await wipe("characters");
-  await wipe("messages");
-  await wipe("scenario_beats");
-  await wipe("lore_entries");
-  await wipe("graph_nodes");
-  await wipe("graph_edges");
-  await wipe("pdf_chunks");
+  const replace = async (
+    table: string,
+    rows: Record<string, unknown>[],
+  ) => {
+    await wipe(table);
+    if (!rows.length) return;
+    const { error } = await admin.from(table).upsert(rows, { onConflict: "id" });
+    if (error) throw new Error(`${table}: ${error.message}`);
+  };
 
-  if (characters.length) {
-    const { error } = await admin.from("characters").insert(
-      characters.map((c) => ({
-        id: c.id,
-        campaign_id: campaignId,
-        name: c.name,
-        attributes: c.attributes,
-        hp: c.hp,
-        max_hp: c.maxHp,
-        inventory: c.inventory,
-        party_group_id: c.partyGroupId || "",
-      })),
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (messages.length) {
-    const { error } = await admin.from("messages").insert(
-      messages.map((m) => ({
-        id: m.id,
-        campaign_id: campaignId,
-        role: m.role,
-        character_id: m.characterId ?? null,
-        text: m.text,
-        created_at: m.createdAt,
-      })),
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (scenarioBeats.length) {
-    const { error } = await admin.from("scenario_beats").insert(
-      scenarioBeats.map((b) => ({
-        id: b.id,
-        campaign_id: campaignId,
-        beat_order: b.order,
-        title: b.title,
-        player_text: b.playerText,
-        mj_notes: b.mjNotes,
-        secrets: b.secrets,
-        transition: b.transition,
-        objective: b.objective,
-        validated: b.validated,
-      })),
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (loreEntries.length) {
-    const { error } = await admin.from("lore_entries").insert(
-      loreEntries.map((e) => ({
-        id: e.id,
-        campaign_id: campaignId,
-        kind: e.kind,
-        name: e.name,
-        aliases: e.aliases,
-        summary: e.summary,
-        mj_notes: e.mjNotes,
-        secrets: e.secrets,
-      })),
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (graphNodes.length) {
-    const { error } = await admin.from("graph_nodes").upsert(
-      graphNodes.map((n) => ({
-        id: n.id,
-        campaign_id: campaignId,
-        type: n.type,
-        name: n.name,
-        description: n.description,
-        mj_notes: n.mjNotes ?? "",
-        revealed: n.revealed !== false,
-      })),
-      { onConflict: "id" },
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (graphEdges.length) {
-    const { error } = await admin.from("graph_edges").upsert(
-      graphEdges.map((e) => ({
-        id: e.id,
-        campaign_id: campaignId,
-        from_id: e.fromId,
-        to_id: e.toId,
-        relation: e.relation,
-        category: e.category,
-        affinity: e.affinity,
-        revealed: e.revealed,
-      })),
-      { onConflict: "id" },
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (pdfChunks.length) {
-    const { error } = await admin.from("pdf_chunks").insert(
-      pdfChunks.map((c) => ({
-        id: c.id,
-        campaign_id: campaignId,
-        text: c.text,
-        index: c.index,
-        audience: c.audience,
-      })),
-    );
-    if (error) throw new Error(error.message);
-  }
+  await replace(
+    "characters",
+    characters.map((c) => ({
+      id: c.id,
+      campaign_id: campaignId,
+      name: c.name,
+      attributes: c.attributes,
+      hp: c.hp,
+      max_hp: c.maxHp,
+      inventory: c.inventory,
+      party_group_id: c.partyGroupId || "",
+    })),
+  );
+  await replace(
+    "messages",
+    messages.map((m) => ({
+      id: m.id,
+      campaign_id: campaignId,
+      role: m.role,
+      character_id: m.characterId ?? null,
+      text: m.text,
+      created_at: m.createdAt,
+    })),
+  );
+  await replace(
+    "scenario_beats",
+    scenarioBeats.map((b) => ({
+      id: b.id,
+      campaign_id: campaignId,
+      beat_order: b.order,
+      title: b.title,
+      player_text: b.playerText,
+      mj_notes: b.mjNotes,
+      secrets: b.secrets,
+      transition: b.transition,
+      objective: b.objective,
+      validated: b.validated,
+    })),
+  );
+  await replace(
+    "lore_entries",
+    loreEntries.map((e) => ({
+      id: e.id,
+      campaign_id: campaignId,
+      kind: e.kind,
+      name: e.name,
+      aliases: e.aliases,
+      summary: e.summary,
+      mj_notes: e.mjNotes,
+      secrets: e.secrets,
+    })),
+  );
+  await replace(
+    "graph_nodes",
+    graphNodes.map((n) => ({
+      id: n.id,
+      campaign_id: campaignId,
+      type: n.type,
+      name: n.name,
+      description: n.description,
+      mj_notes: n.mjNotes ?? "",
+      revealed: n.revealed !== false,
+    })),
+  );
+  await replace(
+    "graph_edges",
+    graphEdges.map((e) => ({
+      id: e.id,
+      campaign_id: campaignId,
+      from_id: e.fromId,
+      to_id: e.toId,
+      relation: e.relation,
+      category: e.category,
+      affinity: e.affinity,
+      revealed: e.revealed,
+    })),
+  );
+  await replace(
+    "pdf_chunks",
+    pdfChunks.map((c) => ({
+      id: c.id,
+      campaign_id: campaignId,
+      text: c.text,
+      index: c.index,
+      audience: c.audience,
+    })),
+  );
 }
 
 export async function pullByJoinCode(

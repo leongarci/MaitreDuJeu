@@ -14,15 +14,22 @@ type Props = {
 export function OocChat({ messages, busy, onSend, variant, onClose }: Props) {
   const [text, setText] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, busy]);
 
+  useEffect(() => {
+    if (variant !== "drawer") return;
+    const id = window.setTimeout(() => inputRef.current?.focus(), 80);
+    return () => window.clearTimeout(id);
+  }, [variant]);
+
   const body = (
     <>
       <div className="mb-2 flex items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.18em] text-amber">
             Hors-jeu
           </p>
@@ -32,13 +39,17 @@ export function OocChat({ messages, busy, onSend, variant, onClose }: Props) {
           </p>
         </div>
         {variant === "drawer" && onClose && (
-          <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={onClose}>
+          <button
+            type="button"
+            className="btn btn-ghost shrink-0 px-2.5 py-1.5 text-xs"
+            onClick={onClose}
+          >
             Fermer
           </button>
         )}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1">
         {messages.length === 0 && (
           <p className="text-xs text-parchment-dim">
             Ex. « Est-ce qu’on a déjà rencontré ce PNJ ? » ou « Pourquoi le
@@ -84,15 +95,17 @@ export function OocChat({ messages, busy, onSend, variant, onClose }: Props) {
         }}
       >
         <input
-          className="field py-2 text-sm"
+          ref={inputRef}
+          className="field py-2.5 text-sm"
           placeholder="Question hors-RP…"
           value={text}
           disabled={busy}
+          enterKeyHint="send"
           onChange={(e) => setText(e.target.value)}
         />
         <button
           type="submit"
-          className="btn btn-primary shrink-0 px-3 py-2 text-xs"
+          className="btn btn-primary shrink-0 px-3 py-2.5 text-xs"
           disabled={busy || !text.trim()}
         >
           OK
@@ -103,9 +116,15 @@ export function OocChat({ messages, busy, onSend, variant, onClose }: Props) {
 
   if (variant === "drawer") {
     return (
-      <div className="fixed inset-0 z-40 flex justify-end bg-black/55 backdrop-blur-sm">
-        <button type="button" className="flex-1" aria-label="Fermer" onClick={onClose} />
-        <aside className="panel flex h-full w-[min(100%,22rem)] flex-col rounded-none border-y-0 border-r-0 p-4">
+      <div className="fixed inset-0 z-40 flex flex-col justify-end bg-black/55 backdrop-blur-sm">
+        <button
+          type="button"
+          className="min-h-12 flex-1"
+          aria-label="Fermer"
+          onClick={onClose}
+        />
+        <aside className="panel flex h-[min(88dvh,34rem)] w-full flex-col rounded-b-none rounded-t-2xl border-x-0 border-b-0 p-4 pb-[max(0.85rem,env(safe-area-inset-bottom))]">
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-parchment/25" />
           {body}
         </aside>
       </div>

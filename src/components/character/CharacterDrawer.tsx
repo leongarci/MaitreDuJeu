@@ -17,14 +17,15 @@ export function CharacterDrawer({ character, open, onClose }: Props) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/55 backdrop-blur-sm">
+    <div className="fixed inset-0 z-40 flex flex-col justify-end bg-black/55 backdrop-blur-sm sm:flex-row">
       <button
         type="button"
-        className="flex-1"
+        className="min-h-12 flex-1"
         aria-label="Fermer"
         onClick={onClose}
       />
-      <aside className="panel fade-in h-full w-[min(100%,22rem)] overflow-y-auto rounded-none border-y-0 border-r-0 p-5">
+      <aside className="panel fade-in flex h-[min(88dvh,36rem)] w-full flex-col overflow-y-auto rounded-b-none rounded-t-2xl border-x-0 border-b-0 p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:h-full sm:w-[min(100%,22rem)] sm:rounded-none sm:border-y-0 sm:border-l sm:border-r-0 sm:pb-5">
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-parchment/25 sm:hidden" />
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-amber">

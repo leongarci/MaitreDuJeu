@@ -192,6 +192,7 @@ function normalizeCharacter(c: Character, fallbackGroupId = ""): Character {
 }
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+let syncChain: Promise<void> = Promise.resolve();
 
 function scheduleSync(get: () => CampaignState) {
   if (syncTimer) clearTimeout(syncTimer);
@@ -550,14 +551,23 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   },
 
   pushCampaignSync: async () => {
-    const snap = buildSnapshot(get());
-    if (!snap?.campaign.joinCode) return;
-    set({ syncStatus: "Envoi…" });
-    const res = await syncPush(snap);
-    set({
-      syncStatus: res.ok ? `Sync OK · ${snap.campaign.joinCode}` : res.error || "Échec sync",
-      error: res.ok ? get().error : res.error || get().error,
-    });
+    const run = async () => {
+      const snap = buildSnapshot(get());
+      if (!snap?.campaign.joinCode) return;
+      set({ syncStatus: "Envoi…" });
+      const res = await syncPush(snap);
+      set({
+        syncStatus: res.ok
+          ? `Sync OK · ${snap.campaign.joinCode}`
+          : res.error || "Échec sync",
+      });
+    };
+    const next = syncChain.then(run, run);
+    syncChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    await next;
   },
 
   pullCampaignSync: async () => {

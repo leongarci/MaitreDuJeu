@@ -56,6 +56,7 @@ export function SessionView({ campaignId }: Props) {
   const [splitIds, setSplitIds] = useState<string[]>([]);
   const [jointIds, setJointIds] = useState<string[]>([]);
   const [oocOpen, setOocOpen] = useState(false);
+  const [oocSeen, setOocSeen] = useState(0);
   const [targetId, setTargetId] = useState<string | null>(null);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -70,6 +71,7 @@ export function SessionView({ campaignId }: Props) {
 
   const icMessages = useMemo(() => tableMessages(messages), [messages]);
   const oocLog = useMemo(() => oocMessages(messages), [messages]);
+  const oocUnread = oocOpen ? 0 : Math.max(0, oocLog.length - oocSeen);
 
   useEffect(() => {
     if (icMessages.length > 0) hasEverHadMessages.current = true;
@@ -133,6 +135,10 @@ export function SessionView({ campaignId }: Props) {
       encounterTurn.characterId !== active?.id);
 
   useEffect(() => {
+    if (oocOpen) setOocSeen(oocLog.length);
+  }, [oocOpen, oocLog.length]);
+
+  useEffect(() => {
     if (!encounter?.active) {
       setTargetId(null);
       return;
@@ -158,17 +164,70 @@ export function SessionView({ campaignId }: Props) {
     );
   }
 
+  const turnHelp = encounterOn
+    ? `Tour de ${encounterTurn?.name || "?"} (init ${encounterTurn?.initiative ?? "—"})`
+    : joint
+      ? `Action collective — confirmation de ${
+          characters.find((c) => c.id === campaign.activeCharacterId)?.name || "?"
+        }`
+      : roundDone
+        ? "Tout le monde a agi — Nouveau round ou Relancer"
+        : `Tour de ${active?.name || "?"} · encore : ${
+            waiting.map((c) => c.name).join(", ") || "—"
+          }`;
+
+  const tableActions = (
+    <>
+      <button
+        type="button"
+        className="btn btn-ghost px-2 py-1 text-xs"
+        disabled={busy || groupChars.length < 2}
+        onClick={() => {
+          setSplitIds([]);
+          setSplitLabel("");
+          setSplitHint("");
+          setSplitOpen(true);
+          setMenuOpen(false);
+        }}
+      >
+        Séparer
+      </button>
+      <button
+        type="button"
+        className="btn btn-ghost px-2 py-1 text-xs"
+        disabled={busy || !!campaign.pendingCheck || encounterOn || !roundDone}
+        onClick={() => {
+          void startNewRound();
+          setMenuOpen(false);
+        }}
+      >
+        Nouveau round
+      </button>
+      <button
+        type="button"
+        className="btn btn-ghost px-2 py-1 text-xs"
+        disabled={busy || !!campaign.pendingCheck || characters.length === 0}
+        onClick={() => {
+          void runRelance();
+          setMenuOpen(false);
+        }}
+      >
+        Relancer
+      </button>
+    </>
+  );
+
   return (
-    <div className="app-shell relative h-[100dvh] overflow-hidden">
-      <header className="z-10 border-b border-line bg-ink/70 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur-md">
-        <div className="mb-2 flex items-center gap-2">
-          <Link href="/" className="shrink-0 text-xs text-parchment-dim">
-            ← Accueil
+    <div className="app-shell relative flex h-[100dvh] min-h-0 flex-col overflow-hidden">
+      <header className="z-10 shrink-0 border-b border-line bg-ink/70 px-3 pb-2 pt-[max(0.6rem,env(safe-area-inset-top))] backdrop-blur-md">
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <Link href="/" className="shrink-0 px-1 py-1 text-xs text-parchment-dim">
+            ←
           </Link>
-          <h1 className="font-display min-w-0 flex-1 truncate text-base text-parchment">
+          <h1 className="font-display min-w-0 flex-1 truncate text-sm text-parchment md:text-base">
             {campaign.title}
           </h1>
-          {campaign.joinCode && (
+          {isDesktop && campaign.joinCode && (
             <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] text-amber">
               {campaign.joinCode}
             </span>
@@ -176,10 +235,16 @@ export function SessionView({ campaignId }: Props) {
           {!isDesktop && (
             <button
               type="button"
-              className="btn btn-ghost shrink-0 px-2 py-1 text-xs"
+              className="btn btn-ghost relative shrink-0 px-2 py-1 text-xs"
               onClick={() => setOocOpen(true)}
+              title="Hors-jeu — questions au MJ"
             >
-              Hors-jeu
+              MJ
+              {oocUnread > 0 && (
+                <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-amber px-1 text-[10px] font-semibold leading-4 text-ink">
+                  {oocUnread > 9 ? "9+" : oocUnread}
+                </span>
+              )}
             </button>
           )}
           <button
@@ -194,30 +259,64 @@ export function SessionView({ campaignId }: Props) {
         </div>
 
         {menuOpen && (
-          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-line/80 bg-ink/50 px-2 py-2">
-            <button
-              type="button"
-              className="btn btn-ghost px-2 py-1 text-xs"
-              onClick={() => setMode(mode === "mobile" ? "desktop" : "mobile")}
-              title="Mode tel / PC"
-            >
-              {isDesktop ? "Mode PC" : "Mode Tel"}
-            </button>
-            {isDesktop && (
+          <div className="mb-2 space-y-2 rounded-lg border border-line/80 bg-ink/50 px-2 py-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 className="btn btn-ghost px-2 py-1 text-xs"
-                onClick={() => void setTtsMuted(!campaign.ttsMuted)}
-                title="Couper/rétablir la voix du MJ"
+                onClick={() => setMode(mode === "mobile" ? "desktop" : "mobile")}
+                title="Mode tel / PC"
               >
-                {campaign.ttsMuted ? "TTS off" : "TTS on"}
+                {isDesktop ? "Mode PC" : "Mode Tel"}
               </button>
+              {isDesktop && (
+                <button
+                  type="button"
+                  className="btn btn-ghost px-2 py-1 text-xs"
+                  onClick={() => void setTtsMuted(!campaign.ttsMuted)}
+                  title="Couper/rétablir la voix du MJ"
+                >
+                  {campaign.ttsMuted ? "TTS off" : "TTS on"}
+                </button>
+              )}
+              {!isDesktop && campaign.joinCode && (
+                <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-amber">
+                  {campaign.joinCode}
+                </span>
+              )}
+              {!isDesktop && tableActions}
+            </div>
+            {!isDesktop && currentBeat && scenarioBeats.length > 0 && (
+              <div className="flex items-center gap-2 text-[11px] text-amber/90">
+                <button
+                  type="button"
+                  className="btn btn-ghost shrink-0 px-2 py-0.5 text-[11px]"
+                  disabled={busy || campaign.scenarioCursor <= 0}
+                  onClick={() => void setScenarioCursor(campaign.scenarioCursor - 1)}
+                >
+                  ←
+                </button>
+                <p className="min-w-0 flex-1 truncate" title={currentBeat.transition || undefined}>
+                  Étape {campaign.scenarioCursor + 1}/{scenarioBeats.length} —{" "}
+                  {currentBeat.title}
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-ghost shrink-0 px-2 py-0.5 text-[11px]"
+                  disabled={
+                    busy || campaign.scenarioCursor >= scenarioBeats.length - 1
+                  }
+                  onClick={() => void setScenarioCursor(campaign.scenarioCursor + 1)}
+                >
+                  →
+                </button>
+              </div>
             )}
           </div>
         )}
 
         {groups.length > 1 && (
-          <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+          <div className="mb-1.5 flex gap-2 overflow-x-auto pb-0.5">
             {groups.map((g) => (
               <button
                 key={g.id}
@@ -243,7 +342,7 @@ export function SessionView({ campaignId }: Props) {
           </div>
         )}
 
-        {currentBeat && scenarioBeats.length > 0 && (
+        {isDesktop && currentBeat && scenarioBeats.length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-[11px] text-amber/90">
             <button
               type="button"
@@ -270,21 +369,23 @@ export function SessionView({ campaignId }: Props) {
           </div>
         )}
 
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
           {groupChars.map((c) => {
             const selected = c.id === campaign.activeCharacterId;
             const hasActed = acted.has(c.id);
             const down = isCharacterDown(c);
+            const combatTurn =
+              encounterOn && encounterTurn?.characterId === c.id;
             return (
               <button
                 key={c.id}
                 type="button"
                 onClick={() => void setActiveCharacter(c.id)}
-                disabled={hasActed && !down && !selected}
-                className={`shrink-0 rounded-full border px-3 py-1.5 text-sm transition ${
+                disabled={!encounterOn && hasActed && !down && !selected}
+                className={`shrink-0 rounded-full border px-2.5 py-1 text-xs transition md:px-3 md:py-1.5 md:text-sm ${
                   down
                     ? "border-danger/50 bg-danger/10 text-danger"
-                    : selected
+                    : combatTurn || selected
                       ? "border-amber bg-amber/20 text-amber"
                       : hasActed
                         ? "border-line/50 bg-ink/20 text-parchment-dim/60"
@@ -292,14 +393,14 @@ export function SessionView({ campaignId }: Props) {
                 }`}
               >
                 {c.name} {c.hp}/{c.maxHp}
-                {down ? " ✕" : hasActed ? " ✓" : selected ? " ←" : ""}
+                {down ? " ✕" : hasActed && !encounterOn ? " ✓" : combatTurn || selected ? " ←" : ""}
               </button>
             );
           })}
           {active && (
             <button
               type="button"
-              className="shrink-0 rounded-full border border-line px-3 py-1.5 text-sm text-parchment-dim"
+              className="shrink-0 rounded-full border border-line px-2.5 py-1 text-xs text-parchment-dim md:px-3 md:py-1.5 md:text-sm"
               onClick={() => setSheetOpen(true)}
             >
               Fiche
@@ -307,66 +408,23 @@ export function SessionView({ campaignId }: Props) {
           )}
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[11px] text-parchment-dim">
-            {encounterOn
-              ? `Tour de ${encounterTurn?.name || "?"} (init ${encounterTurn?.initiative ?? "—"})`
-              : joint
-                ? `Action collective — confirmation de ${
-                    characters.find((c) => c.id === campaign.activeCharacterId)?.name || "?"
-                  }`
-                : roundDone
-                  ? "Tout le monde a agi — Nouveau round ou Relancer"
-                  : `Tour de ${active?.name || "?"} · encore : ${
-                      waiting.map((c) => c.name).join(", ") || "—"
-                    }`}
-          </p>
-          <div className="flex gap-1">
-            <button
-              type="button"
-              className="btn btn-ghost px-2 py-1 text-xs"
-              disabled={busy || groupChars.length < 2}
-              onClick={() => {
-                setSplitIds([]);
-                setSplitLabel("");
-                setSplitHint("");
-                setSplitOpen(true);
-              }}
-            >
-              Séparer
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost px-2 py-1 text-xs"
-              disabled={
-                busy ||
-                !!campaign.pendingCheck ||
-                encounterOn ||
-                !roundDone
-              }
-              onClick={() => void startNewRound()}
-            >
-              Nouveau round
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost px-2 py-1 text-xs"
-              disabled={busy || !!campaign.pendingCheck || characters.length === 0}
-              onClick={() => void runRelance()}
-            >
-              Relancer
-            </button>
+        {(!encounterOn || isDesktop) && (
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+            <p className="min-w-0 flex-1 truncate text-[11px] text-parchment-dim">
+              {turnHelp}
+            </p>
+            {isDesktop && <div className="flex gap-1">{tableActions}</div>}
           </div>
-        </div>
+        )}
       </header>
 
       <div
-        className={`relative min-h-0 flex-1 overflow-y-auto px-4 py-4 ${
+        className={`relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 md:px-4 md:py-4 ${
           isDesktop ? "md:grid md:grid-cols-[1fr_18rem] md:gap-4" : ""
         }`}
       >
         <div>
-          {encounterOn && encounter && (
+          {isDesktop && encounterOn && encounter && (
             <EncounterBanner
               encounter={encounter}
               targetId={targetId}
@@ -446,6 +504,15 @@ export function SessionView({ campaignId }: Props) {
         )}
       </div>
 
+      {!isDesktop && encounterOn && encounter && (
+        <EncounterBanner
+          encounter={encounter}
+          targetId={targetId}
+          onSelectTarget={setTargetId}
+          compact
+        />
+      )}
+
       {dialogue && (
         <div className="border-t border-amber/40 bg-amber/10 px-3 py-2 text-sm text-parchment">
           <span className="text-amber">Dialogue — </span>
@@ -493,7 +560,7 @@ export function SessionView({ campaignId }: Props) {
 
       {!joint && (
         <form
-          className="border-t border-line bg-ink/80 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-md"
+          className="shrink-0 border-t border-line bg-ink/80 px-3 pb-[max(0.65rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-md md:pt-3"
           onSubmit={(e) => {
             e.preventDefault();
             const value = text;
@@ -533,7 +600,8 @@ export function SessionView({ campaignId }: Props) {
           )}
           <div className="flex gap-2">
             <input
-              className="field"
+              className="field py-2.5 text-sm md:py-[0.85rem] md:text-base"
+              enterKeyHint="send"
               placeholder={
                 dialogue
                   ? "Ta réplique…"
