@@ -5,8 +5,31 @@ export function abilityModifier(score: number): number {
   return Math.floor((score - 10) / 2);
 }
 
+function randomIntInclusive(maxExclusive: number): number {
+  const n = Math.floor(maxExclusive);
+  if (n <= 1) return 0;
+  const cryptoObj = globalThis.crypto;
+  if (!cryptoObj?.getRandomValues) {
+    return Math.floor(Math.random() * n);
+  }
+  const span = 256 - (256 % n);
+  const buf = new Uint8Array(1);
+  for (;;) {
+    cryptoObj.getRandomValues(buf);
+    const v = buf[0]!;
+    if (v < span) return v % n;
+  }
+}
+
+/** Uniform integer in [1, sides] via rejection sampling (no modulo bias). */
 export function rollDie(sides: number): number {
-  return Math.floor(Math.random() * sides) + 1;
+  const n = Math.max(1, Math.floor(sides));
+  return randomIntInclusive(n) + 1;
+}
+
+export function clampD20(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(20, Math.max(1, Math.round(value)));
 }
 
 /** 4d6 drop lowest */
@@ -37,7 +60,8 @@ export function resolveCheck(
   dc: number,
   forcedD20?: number,
 ): DiceResult {
-  const d20 = forcedD20 ?? rollDie(20);
+  const d20 =
+    forcedD20 === undefined ? rollDie(20) : clampD20(forcedD20);
   const modifier = abilityModifier(attributes[attribute]);
   const total = d20 + modifier;
   const criticalSuccess = d20 === 20;
@@ -62,4 +86,16 @@ export function resolveCheck(
 
 export function formatModifier(mod: number): string {
   return mod >= 0 ? `+${mod}` : `${mod}`;
+}
+
+export function formatCheckRoll(result: DiceResult): string {
+  const sign = result.modifier >= 0 ? "+" : "";
+  const outcome = result.criticalSuccess
+    ? "réussite critique"
+    : result.criticalFailure
+      ? "échec critique"
+      : result.success
+        ? "réussite"
+        : "échec";
+  return `Jet ${result.attribute} DD ${result.dc} — d20 = ${result.d20} ${sign}${result.modifier} → ${result.total} (${outcome})`;
 }

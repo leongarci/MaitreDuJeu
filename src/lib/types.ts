@@ -87,8 +87,56 @@ export interface Campaign {
   partyGroups: PartyGroup[];
   activePartyGroupId: string | null;
   pendingJointAction?: PendingJointAction | null;
+  encounter?: Encounter | null;
   createdAt: number;
   updatedAt: number;
+}
+
+export type CombatProfile = "minion" | "brute" | "skirmisher" | "elite";
+
+export type HpBand = "intact" | "blesse" | "mal_en_point" | "a_terre";
+
+export interface Combatant {
+  id: string;
+  name: string;
+  side: "pc" | "hostile";
+  characterId?: string;
+  profile: CombatProfile;
+  dex: number;
+  hp: number;
+  maxHp: number;
+  ac: number;
+  atkBonus: number;
+  damageDie: 4 | 6 | 8;
+  initiative: number;
+}
+
+export interface Encounter {
+  active: boolean;
+  round: number;
+  turnIndex: number;
+  combatants: Combatant[];
+  lastAttackerId?: string;
+}
+
+export interface StartEncounterHostile {
+  name: string;
+  profile?: CombatProfile;
+  count?: number;
+}
+
+export interface AttackResult {
+  attackerName: string;
+  defenderName: string;
+  d20: number;
+  bonus: number;
+  total: number;
+  ac: number;
+  hit: boolean;
+  crit: boolean;
+  damage: number;
+  defenderBand: HpBand;
+  defenderDown: boolean;
 }
 
 export interface SpeechLine {
@@ -96,10 +144,12 @@ export interface SpeechLine {
   text: string;
 }
 
+export type MessageRole = "gm" | "player" | "ooc" | "ooc_gm";
+
 export interface Message {
   id: string;
   campaignId: string;
-  role: "gm" | "player";
+  role: MessageRole;
   characterId?: string;
   text: string;
   createdAt: number;
@@ -205,7 +255,13 @@ export interface ScenarioBeatPrompt {
 }
 
 export interface GmTurnRequest {
-  mode: "intro" | "action" | "resolve_check" | "relance";
+  mode:
+    | "intro"
+    | "action"
+    | "resolve_check"
+    | "relance"
+    | "resolve_npc"
+    | "resolve_attack";
   action?: string;
   activeCharacterId: string;
   campaign: Pick<
@@ -238,6 +294,15 @@ export interface GmTurnRequest {
   /** Other party groups currently elsewhere (isolation). */
   otherPartyGroups?: Array<{ label: string; characterNames: string[] }>;
   activePartyGroupLabel?: string;
+  /** Ground-truth snapshot so the model cannot rewind or duplicate the current scene. */
+  hereNow?: {
+    locationHint?: string;
+    beatTitle?: string;
+    lastGmNarration?: string;
+    presentNames?: string[];
+  };
+  encounterSummary?: string;
+  attackResult?: AttackResult;
 }
 
 export interface GmGraphUpdate {
@@ -272,6 +337,15 @@ export interface InventoryUpdate {
   remove?: string[];
 }
 
+export interface HpUpdate {
+  characterId?: string;
+  characterName?: string;
+  /** Absolute HP after the turn. Prefer this when known. */
+  hp?: number;
+  /** Relative change (negative = damage). Used if `hp` is omitted. */
+  delta?: number;
+}
+
 export interface GmTurnResponse {
   narration: string;
   propose_check: {
@@ -297,6 +371,25 @@ export interface GmTurnResponse {
   consume_turn: boolean;
   /** Add/remove items on character sheets when fiction changes inventory. */
   inventory_updates: InventoryUpdate[];
+  /** Apply damage / healing. Required whenever narration wounds or heals a PC. */
+  hp_updates: HpUpdate[];
+  /** Where the active group is right now (short place name). */
+  location_update: { hint: string } | null;
+  start_encounter: { hostiles: StartEncounterHostile[] } | null;
+  end_encounter: boolean;
+}
+
+export interface GmOocRequest {
+  question: string;
+  campaign: Pick<Campaign, "id" | "title" | "sessionSummary" | "scenarioCursor">;
+  characters: Array<Pick<Character, "id" | "name" | "hp" | "maxHp">>;
+  recentTable: Array<{ speaker: string; text: string }>;
+  recentOoc: Array<{ speaker: string; text: string }>;
+  knownFacts: string;
+}
+
+export interface GmOocResponse {
+  answer: string;
 }
 
 export type StructuredBeatDraft = {

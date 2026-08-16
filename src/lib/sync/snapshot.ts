@@ -1,6 +1,7 @@
 import type {
   Campaign,
   Character,
+  Encounter,
   GraphEdge,
   GraphNode,
   LoreEntry,
@@ -40,6 +41,7 @@ export function campaignToRow(c: Campaign) {
     party_groups: c.partyGroups ?? [],
     active_party_group_id: c.activePartyGroupId ?? null,
     pending_joint_action: c.pendingJointAction ?? null,
+    encounter: c.encounter ?? null,
     created_at: c.createdAt,
     updated_at: c.updatedAt,
   };
@@ -68,6 +70,7 @@ export function rowToCampaign(row: Record<string, unknown>): Campaign {
     activePartyGroupId: (row.active_party_group_id as string | null) ?? null,
     pendingJointAction:
       (row.pending_joint_action as PendingJointAction | null) ?? null,
+    encounter: (row.encounter as Encounter | null) ?? null,
     createdAt: Number(row.created_at ?? Date.now()),
     updatedAt: Number(row.updated_at ?? Date.now()),
   };

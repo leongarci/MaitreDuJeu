@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CharacterDrawer } from "@/components/character/CharacterDrawer";
 import { DiceModal } from "@/components/dice/DiceModal";
+import { EncounterBanner } from "@/components/session/EncounterBanner";
+import { OocChat } from "@/components/session/OocChat";
 import { useDeviceMode } from "@/hooks/useDeviceMode";
 import { getLastTtsError } from "@/lib/client/tts";
 import { unlockAudio } from "@/lib/client/tts-local";
-import { groupMembers } from "@/lib/party/groups";
+import { oocMessages, tableMessages } from "@/lib/messages";
+import { currentCombatant, living } from "@/lib/combat/engine";
+import { groupMembers, isCharacterDown } from "@/lib/party/groups";
 import { useCampaignStore } from "@/lib/store/campaign-store";
 
 interface Props {
@@ -39,6 +43,8 @@ export function SessionView({ campaignId }: Props) {
     resolvePendingCheck,
     setScenarioCursor,
     pullCampaignSync,
+    sendOoc,
+    oocBusy,
   } = useCampaignStore();
 
   const [text, setText] = useState("");
@@ -49,6 +55,8 @@ export function SessionView({ campaignId }: Props) {
   const [splitHint, setSplitHint] = useState("");
   const [splitIds, setSplitIds] = useState<string[]>([]);
   const [jointIds, setJointIds] = useState<string[]>([]);
+  const [oocOpen, setOocOpen] = useState(false);
+  const [targetId, setTargetId] = useState<string | null>(null);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const introStarted = useRef(false);
@@ -60,22 +68,25 @@ export function SessionView({ campaignId }: Props) {
     void loadCampaign(campaignId);
   }, [campaignId, loadCampaign]);
 
+  const icMessages = useMemo(() => tableMessages(messages), [messages]);
+  const oocLog = useMemo(() => oocMessages(messages), [messages]);
+
   useEffect(() => {
-    if (messages.length > 0) hasEverHadMessages.current = true;
-  }, [messages.length]);
+    if (icMessages.length > 0) hasEverHadMessages.current = true;
+  }, [icMessages.length]);
 
   useEffect(() => {
     if (!campaign || campaign.id !== campaignId) return;
-    if (introStarted.current || busy || messages.length > 0) return;
+    if (introStarted.current || busy || icMessages.length > 0) return;
     if (hasEverHadMessages.current) return;
     if (characters.length === 0) return;
     introStarted.current = true;
     void startIntro();
-  }, [campaign, campaignId, characters.length, messages.length, busy, startIntro]);
+  }, [campaign, campaignId, characters.length, icMessages.length, busy, startIntro]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, busy]);
+  }, [icMessages.length, busy]);
 
   useEffect(() => {
     if (!campaign?.joinCode) return;
@@ -99,7 +110,9 @@ export function SessionView({ campaignId }: Props) {
   );
   const activeGroup = groups.find((g) => g.id === activeGroupId) ?? null;
   const acted = new Set(activeGroup?.actedThisRound ?? campaign?.actedThisRound ?? []);
-  const waiting = groupChars.filter((c) => !acted.has(c.id));
+  const waiting = groupChars.filter(
+    (c) => !acted.has(c.id) && !isCharacterDown(c),
+  );
   const active = characters.find((c) => c.id === campaign?.activeCharacterId);
   const currentBeat =
     scenarioBeats.find((b) => b.order === campaign?.scenarioCursor) ||
@@ -108,8 +121,31 @@ export function SessionView({ campaignId }: Props) {
   const joint = campaign?.pendingJointAction;
   const roundDone = groupChars.length > 0 && waiting.length === 0;
   const allies = groupChars.filter(
-    (c) => c.id !== active?.id && !acted.has(c.id),
+    (c) =>
+      c.id !== active?.id && !acted.has(c.id) && !isCharacterDown(c),
   );
+  const encounter = campaign?.encounter;
+  const encounterOn = Boolean(encounter?.active);
+  const encounterTurn = encounterOn ? currentCombatant(encounter) : null;
+  const encounterBlocksInput =
+    encounterOn &&
+    (encounterTurn?.side !== "pc" ||
+      encounterTurn.characterId !== active?.id);
+
+  useEffect(() => {
+    if (!encounter?.active) {
+      setTargetId(null);
+      return;
+    }
+    const hostiles = living(encounter, "hostile");
+    if (!hostiles.length) {
+      setTargetId(null);
+      return;
+    }
+    if (!targetId || !hostiles.some((h) => h.id === targetId)) {
+      setTargetId(hostiles[0]!.id);
+    }
+  }, [encounter, targetId]);
 
   if (!campaign) {
     return (
@@ -136,6 +172,15 @@ export function SessionView({ campaignId }: Props) {
             <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] text-amber">
               {campaign.joinCode}
             </span>
+          )}
+          {!isDesktop && (
+            <button
+              type="button"
+              className="btn btn-ghost shrink-0 px-2 py-1 text-xs"
+              onClick={() => setOocOpen(true)}
+            >
+              Hors-jeu
+            </button>
           )}
           <button
             type="button"
@@ -229,22 +274,25 @@ export function SessionView({ campaignId }: Props) {
           {groupChars.map((c) => {
             const selected = c.id === campaign.activeCharacterId;
             const hasActed = acted.has(c.id);
+            const down = isCharacterDown(c);
             return (
               <button
                 key={c.id}
                 type="button"
                 onClick={() => void setActiveCharacter(c.id)}
-                disabled={hasActed && !selected}
+                disabled={hasActed && !down && !selected}
                 className={`shrink-0 rounded-full border px-3 py-1.5 text-sm transition ${
-                  selected
-                    ? "border-amber bg-amber/20 text-amber"
-                    : hasActed
-                      ? "border-line/50 bg-ink/20 text-parchment-dim/60"
-                      : "border-line bg-ink/40 text-parchment-dim"
+                  down
+                    ? "border-danger/50 bg-danger/10 text-danger"
+                    : selected
+                      ? "border-amber bg-amber/20 text-amber"
+                      : hasActed
+                        ? "border-line/50 bg-ink/20 text-parchment-dim/60"
+                        : "border-line bg-ink/40 text-parchment-dim"
                 }`}
               >
-                {c.name}
-                {hasActed ? " ✓" : selected ? " ←" : ""}
+                {c.name} {c.hp}/{c.maxHp}
+                {down ? " ✕" : hasActed ? " ✓" : selected ? " ←" : ""}
               </button>
             );
           })}
@@ -261,15 +309,17 @@ export function SessionView({ campaignId }: Props) {
 
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-parchment-dim">
-            {joint
-              ? `Action collective — confirmation de ${
-                  characters.find((c) => c.id === campaign.activeCharacterId)?.name || "?"
-                }`
-              : roundDone
-                ? "Tout le monde a agi — Nouveau round ou Relancer"
-                : `Tour de ${active?.name || "?"} · encore : ${
-                    waiting.map((c) => c.name).join(", ") || "—"
-                  }`}
+            {encounterOn
+              ? `Tour de ${encounterTurn?.name || "?"} (init ${encounterTurn?.initiative ?? "—"})`
+              : joint
+                ? `Action collective — confirmation de ${
+                    characters.find((c) => c.id === campaign.activeCharacterId)?.name || "?"
+                  }`
+                : roundDone
+                  ? "Tout le monde a agi — Nouveau round ou Relancer"
+                  : `Tour de ${active?.name || "?"} · encore : ${
+                      waiting.map((c) => c.name).join(", ") || "—"
+                    }`}
           </p>
           <div className="flex gap-1">
             <button
@@ -288,7 +338,12 @@ export function SessionView({ campaignId }: Props) {
             <button
               type="button"
               className="btn btn-ghost px-2 py-1 text-xs"
-              disabled={busy || !!campaign.pendingCheck || !roundDone}
+              disabled={
+                busy ||
+                !!campaign.pendingCheck ||
+                encounterOn ||
+                !roundDone
+              }
               onClick={() => void startNewRound()}
             >
               Nouveau round
@@ -311,6 +366,13 @@ export function SessionView({ campaignId }: Props) {
         }`}
       >
         <div>
+          {encounterOn && encounter && (
+            <EncounterBanner
+              encounter={encounter}
+              targetId={targetId}
+              onSelectTarget={setTargetId}
+            />
+          )}
           {sceneUrl && (
             <div className="fade-in mb-4 overflow-hidden rounded-2xl border border-line">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -323,14 +385,14 @@ export function SessionView({ campaignId }: Props) {
           )}
 
           <div className="space-y-3">
-            {messages.length === 0 && !hasEverHadMessages.current && (
+            {icMessages.length === 0 && !hasEverHadMessages.current && (
               <div className="panel fade-in p-4 text-sm leading-relaxed text-parchment-dim">
                 {busy
                   ? "Le Maître du Jeu prépare l’introduction…"
                   : "La table est prête — l’intro va commencer."}
               </div>
             )}
-            {messages.map((m) => {
+            {icMessages.map((m) => {
               const speaker =
                 m.role === "gm"
                   ? "MJ"
@@ -373,15 +435,14 @@ export function SessionView({ campaignId }: Props) {
         </div>
 
         {isDesktop && (
-          <aside className="hidden md:block">
-            <div className="panel sticky top-2 space-y-2 p-3 text-xs text-parchment-dim">
-              <div className="font-display text-sm text-amber">Table PC</div>
-              <p>
-                Groupe : {activeGroup?.label || "—"}. Tours auto · actions
-                collectives à confirmation · séparation possible.
-              </p>
-            </div>
-          </aside>
+          <div className="hidden md:block">
+            <OocChat
+              variant="sidebar"
+              messages={oocLog}
+              busy={oocBusy}
+              onSend={(t) => void sendOoc(t)}
+            />
+          </div>
         )}
       </div>
 
@@ -389,7 +450,10 @@ export function SessionView({ campaignId }: Props) {
         <div className="border-t border-amber/40 bg-amber/10 px-3 py-2 text-sm text-parchment">
           <span className="text-amber">Dialogue — </span>
           {dialogue.prompt}
-          <span className="text-parchment-dim"> ({dialogue.to})</span>
+          <span className="text-parchment-dim">
+            {" "}
+            ({dialogue.to.replace(/^(pj|pnj):/i, "")})
+          </span>
         </div>
       )}
 
@@ -437,10 +501,13 @@ export function SessionView({ campaignId }: Props) {
             const withIds = [...jointIds];
             setJointIds([]);
             void unlockAudio();
-            void sendAction(value, { withCharacterIds: withIds });
+            void sendAction(value, {
+              withCharacterIds: withIds,
+              targetCombatantId: targetId ?? undefined,
+            });
           }}
         >
-          {allies.length > 0 && !dialogue && (
+          {allies.length > 0 && !dialogue && !encounterOn && (
             <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-parchment-dim">
               <span>Avec :</span>
               {allies.map((c) => {
@@ -470,16 +537,22 @@ export function SessionView({ campaignId }: Props) {
               placeholder={
                 dialogue
                   ? "Ta réplique…"
-                  : active
-                    ? `Action de ${active.name}…`
-                    : "Choisissez un personnage"
+                  : encounterBlocksInput
+                    ? `Tour de ${encounterTurn?.name ?? "…"} — attends ton tour`
+                    : active && isCharacterDown(active)
+                      ? `${active.name} est à terre — utilise Hors-jeu pour une question`
+                      : active
+                        ? `Action de ${active.name}…`
+                        : "Choisissez un personnage"
               }
               value={text}
               disabled={
                 busy ||
                 !!campaign.pendingCheck ||
                 !active ||
-                (!!active && acted.has(active.id) && !dialogue)
+                encounterBlocksInput ||
+                (!!active && isCharacterDown(active)) ||
+                (!!active && !encounterOn && acted.has(active.id) && !dialogue)
               }
               onChange={(e) => setText(e.target.value)}
             />
@@ -491,7 +564,9 @@ export function SessionView({ campaignId }: Props) {
                 !!campaign.pendingCheck ||
                 !active ||
                 !text.trim() ||
-                (!!active && acted.has(active.id) && !dialogue)
+                encounterBlocksInput ||
+                (!!active && isCharacterDown(active)) ||
+                (!!active && !encounterOn && acted.has(active.id) && !dialogue)
               }
             >
               Envoyer
@@ -586,6 +661,16 @@ export function SessionView({ campaignId }: Props) {
           character={active}
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}
+        />
+      )}
+
+      {!isDesktop && oocOpen && (
+        <OocChat
+          variant="drawer"
+          messages={oocLog}
+          busy={oocBusy}
+          onSend={(t) => void sendOoc(t)}
+          onClose={() => setOocOpen(false)}
         />
       )}
 

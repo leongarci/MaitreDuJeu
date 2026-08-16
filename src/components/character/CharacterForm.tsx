@@ -109,13 +109,16 @@ export function CharacterForm({ onSubmit }: Props) {
       <button
         type="button"
         className="btn btn-primary w-full"
-        onClick={() =>
+        disabled={!name.trim()}
+        onClick={() => {
+          const trimmed = name.trim();
+          if (!trimmed) return;
           onSubmit({
-            name: name.trim() || "Aventurier",
+            name: trimmed,
             mode,
             attributes,
-          })
-        }
+          });
+        }}
       >
         Ajouter le personnage
       </button>

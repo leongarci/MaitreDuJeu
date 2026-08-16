@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { db } from "@/lib/db/schema";
 import {
   defaultAttributes,
+  formatCheckRoll,
   resolveCheck,
   rollRandomAttributes,
   startingHp,
@@ -15,10 +16,28 @@ import { beatsForPrompt } from "@/lib/scenario/beats";
 import { gateAdvance } from "@/lib/scenario/advance";
 import {
   isPlayerQuestionToGm,
+  isRiskyWeAction,
   isVaguePlayerAction,
+  RISKY_WE_HINT,
   VAGUE_ACTION_HINT,
 } from "@/lib/gm/action-guard";
+import { humanizeDialogueTo } from "@/lib/gm/dialogue-target";
 import { retrieveLoreEntries, toLorePrompts } from "@/lib/lore/retrieve";
+import { tableMessages } from "@/lib/messages";
+import {
+  advanceTurn,
+  applyCombatantPatch,
+  buildEncounter,
+  currentCombatant,
+  encounterSummaryForPrompt,
+  endIfResolved,
+  formatAttackLine,
+  isOffensiveAction,
+  living,
+  pickHostileTarget,
+  resolveAttack,
+  syncPcCombatants,
+} from "@/lib/combat/engine";
 import { generateJoinCode } from "@/lib/sync/codes";
 import {
   ensureSyncSchema,
@@ -33,6 +52,7 @@ import {
   createDefaultPartyGroup,
   ensurePartyState,
   groupMembers,
+  isCharacterDown,
   markActedInGroup,
   mergeAllGroups,
   resetGroupRound,
@@ -41,6 +61,7 @@ import {
 import type {
   Asset,
   AssetMeta,
+  AttackResult,
   Attributes,
   Campaign,
   Character,
@@ -49,6 +70,9 @@ import type {
   GmTurnResponse,
   GraphEdge,
   GraphNode,
+  GmOocRequest,
+  GmOocResponse,
+  HpUpdate,
   InventoryUpdate,
   LoreEntry,
   LoreEntryDraft,
@@ -73,6 +97,7 @@ interface CampaignState {
   graphEdges: GraphEdge[];
   assets: Asset[];
   busy: boolean;
+  oocBusy: boolean;
   error: string | null;
   sceneUrl: string | null;
   syncStatus: string | null;
@@ -113,8 +138,9 @@ interface CampaignState {
   startNewRound: () => Promise<void>;
   sendAction: (
     text: string,
-    opts?: { withCharacterIds?: string[] },
+    opts?: { withCharacterIds?: string[]; targetCombatantId?: string },
   ) => Promise<void>;
+  sendOoc: (text: string) => Promise<void>;
   confirmJointAction: () => Promise<void>;
   declineJointAction: () => Promise<void>;
   setActivePartyGroup: (groupId: string) => Promise<void>;
@@ -153,6 +179,7 @@ function normalizeCampaign(campaign: Campaign): Campaign {
     partyGroups: Array.isArray(campaign.partyGroups) ? campaign.partyGroups : [],
     activePartyGroupId: campaign.activePartyGroupId ?? null,
     pendingJointAction: campaign.pendingJointAction ?? null,
+    encounter: campaign.encounter ?? null,
   };
 }
 
@@ -331,6 +358,61 @@ function graphPayload(nodes: GraphNode[], edges: GraphEdge[]) {
   };
 }
 
+function hereNowPayload(
+  campaign: Campaign,
+  characters: Character[],
+  messages: Message[],
+  scenarioBeats: ScenarioBeat[],
+) {
+  const group = campaign.partyGroups.find(
+    (g) => g.id === campaign.activePartyGroupId,
+  );
+  const beat =
+    scenarioBeats.find((b) => b.order === campaign.scenarioCursor) ||
+    scenarioBeats[0];
+  const lastGm = [...messages].reverse().find((m) => m.role === "gm");
+  return {
+    locationHint: group?.locationHint || "",
+    beatTitle: beat?.title || "",
+    lastGmNarration: lastGm?.text?.slice(0, 400) || "",
+    presentNames: groupMembers(characters, campaign.activePartyGroupId).map(
+      (c) => c.name,
+    ),
+  };
+}
+
+function recentTableForPrompt(messages: Message[], take: number) {
+  return tableMessages(messages)
+    .slice(-take)
+    .map((m) => ({
+      role: m.role,
+      characterId: m.characterId,
+      text: m.text,
+    }));
+}
+
+function applyHpUpdates(
+  characters: Character[],
+  updates: HpUpdate[],
+): Character[] {
+  if (!updates.length) return characters;
+  return characters.map((c) => {
+    const matched = updates.filter(
+      (u) =>
+        (u.characterId && u.characterId === c.id) ||
+        (u.characterName &&
+          u.characterName.trim().toLowerCase() === c.name.trim().toLowerCase()),
+    );
+    if (!matched.length) return c;
+    let hp = c.hp;
+    for (const u of matched) {
+      if (typeof u.hp === "number") hp = u.hp;
+      else if (typeof u.delta === "number") hp = hp + u.delta;
+    }
+    return { ...c, hp: Math.max(0, Math.min(c.maxHp, hp)) };
+  });
+}
+
 export const useCampaignStore = create<CampaignState>((set, get) => ({
   ready: false,
   campaigns: [],
@@ -344,6 +426,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   graphEdges: [],
   assets: [],
   busy: false,
+  oocBusy: false,
   error: null,
   sceneUrl: null,
   syncStatus: null,
@@ -442,6 +525,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       partyGroups: [group],
       activePartyGroupId: group.id,
       pendingJointAction: null,
+      encounter: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -574,13 +658,18 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       ensured.campaign.activePartyGroupId ||
       ensured.campaign.partyGroups[0]?.id ||
       createDefaultPartyGroup(campaign.id).id;
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      set({ error: "Donne un nom au personnage." });
+      return;
+    }
     const attrs =
       mode === "random" ? rollRandomAttributes() : (attributes ?? defaultAttributes());
     const hp = Math.max(1, startingHp(attrs.CON));
     const character: Character = {
       id: nanoid(),
       campaignId: campaign.id,
-      name: name.trim() || `Héros ${characters.length + 1}`,
+      name: trimmedName,
       attributes: attrs,
       hp,
       maxHp: hp,
@@ -949,7 +1038,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       graphEdges,
       assets,
     } = state;
-    if (!campaign || state.busy || messages.length > 0) return;
+    if (!campaign || state.busy || tableMessages(messages).length > 0) return;
 
     const activeId = campaign.activeCharacterId ?? characters[0]?.id;
     if (!activeId) {
@@ -992,6 +1081,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         ...graphPayload(graphNodes, graphEdges),
         assets: assetMeta,
         ...roundMeta(characters, []),
+        hereNow: hereNowPayload(campaign, characters, messages, scenarioBeats),
+        encounterSummary: encounterSummaryForPrompt(campaign.encounter),
       };
 
       const res = await fetch("/api/gm-turn", {
@@ -1054,11 +1145,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         activeCharacterId: activeId,
         campaign: campaignPayload(clearedRound),
         characters: meta.charactersForPrompt,
-        recentMessages: messages.slice(-16).map((m) => ({
-          role: m.role,
-          characterId: m.characterId,
-          text: m.text,
-        })),
+        recentMessages: recentTableForPrompt(messages, 16),
         pdfChunks: mapLore(lore),
         scenarioBeats: beatsForPrompt(scenarioBeats, cursor, 1),
         loreEntries: pickLoreForTurn(
@@ -1074,6 +1161,13 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         waitingCharacterNames: meta.waitingCharacterNames,
         activePartyGroupLabel: meta.activePartyGroupLabel,
         otherPartyGroups: meta.otherPartyGroups,
+        hereNow: hereNowPayload(
+          clearedRound,
+          ensured.characters,
+          messages,
+          scenarioBeats,
+        ),
+        encounterSummary: encounterSummaryForPrompt(clearedRound.encounter),
       };
 
       const res = await fetch("/api/gm-turn", {
@@ -1189,6 +1283,10 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       set({ error: "Ce personnage n’est pas dans le groupe actif." });
       return;
     }
+    if (isCharacterDown(active) && !isPlayerQuestionToGm(text)) {
+      set({ error: `${active.name} est à terre (0 PV) — plus d’action de table.` });
+      return;
+    }
     const group = ensured.campaign.partyGroups.find(
       (g) => g.id === ensured.campaign.activePartyGroupId,
     );
@@ -1196,7 +1294,16 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     if (!trimmed) return;
 
     const isQuestion = isPlayerQuestionToGm(trimmed);
-    if (
+    const encounter = ensured.campaign.encounter;
+    if (encounter?.active && !isQuestion) {
+      const cur = currentCombatant(encounter);
+      if (!cur || cur.side !== "pc" || cur.characterId !== activeId) {
+        set({
+          error: `Ce n’est pas le tour de ${active.name} (tour de ${cur?.name ?? "…"}).`,
+        });
+        return;
+      }
+    } else if (
       group?.actedThisRound.includes(activeId) &&
       !campaign.pendingDialogue &&
       !isQuestion
@@ -1210,17 +1317,28 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       set({ error: VAGUE_ACTION_HINT });
       return;
     }
+    if (
+      !isDialogueReply &&
+      !isQuestion &&
+      isRiskyWeAction(trimmed) &&
+      (opts?.withCharacterIds ?? []).length === 0
+    ) {
+      set({ error: RISKY_WE_HINT });
+      return;
+    }
 
-    const withIds = (opts?.withCharacterIds ?? []).filter(
-      (id) =>
-        id !== activeId &&
-        ensured.characters.some(
-          (c) =>
-            c.id === id &&
-            c.partyGroupId === ensured.campaign.activePartyGroupId &&
-            !(group?.actedThisRound.includes(id)),
-        ),
-    );
+    const withIds = encounter?.active
+      ? []
+      : (opts?.withCharacterIds ?? []).filter(
+          (id) =>
+            id !== activeId &&
+            ensured.characters.some(
+              (c) =>
+                c.id === id &&
+                c.partyGroupId === ensured.campaign.activePartyGroupId &&
+                !(group?.actedThisRound.includes(id)),
+            ),
+        );
 
     set({ busy: true, error: null });
 
@@ -1290,7 +1408,22 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     set({ messages: withPlayer, campaign: stamped, characters: ensured.characters });
 
     try {
-      await runGmActionTurn(labeled, activeId, [activeId], get, set);
+      if (
+        encounter?.active &&
+        !isQuestion &&
+        !isDialogueReply &&
+        isOffensiveAction(labeled)
+      ) {
+        await runPlayerAttackTurn(
+          labeled,
+          activeId,
+          opts?.targetCombatantId,
+          get,
+          set,
+        );
+      } else {
+        await runGmActionTurn(labeled, activeId, [activeId], get, set);
+      }
     } catch (e) {
       set({
         busy: false,
@@ -1409,7 +1542,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       campaignId: campaign.id,
       role: "player",
       characterId: character.id,
-      text: `Jet ${pending.attribute} DD ${pending.dc} → ${result.d20}${result.modifier >= 0 ? "+" : ""}${result.modifier} = ${result.total} (${result.success ? "réussite" : "échec"})`,
+      text: formatCheckRoll(result),
       createdAt: Date.now(),
     };
     await db.messages.add(rollMsg);
@@ -1439,11 +1572,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         activeCharacterId: character.id,
         campaign: campaignPayload(cleared),
         characters,
-        recentMessages: withRoll.slice(-12).map((m) => ({
-          role: m.role,
-          characterId: m.characterId,
-          text: m.text,
-        })),
+        recentMessages: recentTableForPrompt(withRoll, 12),
         pdfChunks: mapLore(lore),
         scenarioBeats: beatsForPrompt(scenarioBeats, cursor, 1),
         loreEntries: pickLoreForTurn(
@@ -1461,6 +1590,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
           actionContext: pending.actionContext,
         },
         ...roundMeta(characters, previewActed),
+        hereNow: hereNowPayload(cleared, characters, withRoll, scenarioBeats),
+        encounterSummary: encounterSummaryForPrompt(cleared.encounter),
       };
 
       const res = await fetch("/api/gm-turn", {
@@ -1481,6 +1612,103 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       set({
         busy: false,
         error: e instanceof Error ? e.message : "Erreur de résolution",
+      });
+    }
+  },
+
+  sendOoc: async (text) => {
+    const state = get();
+    const { campaign, characters, messages, scenarioBeats, graphNodes } = state;
+    if (!campaign || state.oocBusy) return;
+    const question = text.trim();
+    if (!question) return;
+
+    const playerMsg: Message = {
+      id: nanoid(),
+      campaignId: campaign.id,
+      role: "ooc",
+      text: question,
+      createdAt: Date.now(),
+    };
+    await db.messages.add(playerMsg);
+    const withPlayer = [...messages, playerMsg];
+    set({ messages: withPlayer, oocBusy: true, error: null });
+
+    try {
+      const beat =
+        scenarioBeats.find((b) => b.order === campaign.scenarioCursor) ||
+        scenarioBeats[0];
+      const group = campaign.partyGroups.find(
+        (g) => g.id === campaign.activePartyGroupId,
+      );
+      const revealed = graphNodes
+        .filter((n) => n.revealed !== false)
+        .map((n) => `${n.type}: ${n.name}`)
+        .slice(0, 20);
+      const knownFacts = [
+        beat ? `Étape visible: ${beat.title}` : "",
+        group?.locationHint ? `Lieu actuel: ${group.locationHint}` : "",
+        revealed.length ? `Entités révélées: ${revealed.join("; ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const body: GmOocRequest = {
+        question,
+        campaign: campaignPayload(campaign),
+        characters: characters.map((c) => ({
+          id: c.id,
+          name: c.name,
+          hp: c.hp,
+          maxHp: c.maxHp,
+        })),
+        recentTable: tableMessages(withPlayer)
+          .slice(-10)
+          .map((m) => ({
+            speaker:
+              m.role === "gm"
+                ? "MJ"
+                : characters.find((c) => c.id === m.characterId)?.name ||
+                  "Joueur",
+            text: m.text,
+          })),
+        recentOoc: withPlayer
+          .filter((m) => m.role === "ooc" || m.role === "ooc_gm")
+          .slice(-8)
+          .map((m) => ({
+            speaker: m.role === "ooc_gm" ? "MJ (hors-jeu)" : "Joueur",
+            text: m.text,
+          })),
+        knownFacts,
+      };
+
+      const res = await fetch("/api/gm-ooc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Le MJ hors-jeu ne répond pas");
+      }
+      const data = (await res.json()) as GmOocResponse;
+      const gmMsg: Message = {
+        id: nanoid(),
+        campaignId: campaign.id,
+        role: "ooc_gm",
+        text: data.answer?.trim() || "Pas de réponse.",
+        createdAt: Date.now(),
+      };
+      await db.messages.add(gmMsg);
+      set({
+        messages: [...get().messages, gmMsg],
+        oocBusy: false,
+      });
+      scheduleSync(get);
+    } catch (e) {
+      set({
+        oocBusy: false,
+        error: e instanceof Error ? e.message : "Erreur chat hors-jeu",
       });
     }
   },
@@ -1527,11 +1755,7 @@ async function runGmActionTurn(
     activeCharacterId: leaderId,
     campaign: campaignPayload(ensured.campaign),
     characters: meta.charactersForPrompt,
-    recentMessages: messages.slice(-12).map((m) => ({
-      role: m.role,
-      characterId: m.characterId,
-      text: m.text,
-    })),
+    recentMessages: recentTableForPrompt(messages, 12),
     pdfChunks: mapLore(lore),
     scenarioBeats: beatsForPrompt(scenarioBeats, cursor, 1),
     loreEntries: pickLoreForTurn(
@@ -1548,6 +1772,13 @@ async function runGmActionTurn(
     jointParticipantNames: meta.jointParticipantNames,
     activePartyGroupLabel: meta.activePartyGroupLabel,
     otherPartyGroups: meta.otherPartyGroups,
+    hereNow: hereNowPayload(
+      ensured.campaign,
+      ensured.characters,
+      messages,
+      scenarioBeats,
+    ),
+    encounterSummary: encounterSummaryForPrompt(ensured.campaign.encounter),
   };
 
   const res = await fetch("/api/gm-turn", {
@@ -1626,6 +1857,7 @@ async function applyGmResponse(
     skipActedTracking?: boolean;
     /** Player action or check resolution — counts toward beat pacing. */
     countsTowardBeat?: boolean;
+    skipEncounterContinue?: boolean;
   },
 ) {
   const state = get();
@@ -1724,12 +1956,84 @@ async function applyGmResponse(
     for (const ch of nextCharacters) await db.characters.put(ch);
   }
 
+  if (gm.hp_updates?.length) {
+    nextCharacters = applyHpUpdates(nextCharacters, gm.hp_updates);
+    for (const ch of nextCharacters) await db.characters.put(ch);
+  }
+
+  if (nextCampaign.encounter?.active) {
+    nextCampaign.encounter = syncPcCombatants(
+      nextCampaign.encounter,
+      nextCharacters,
+    );
+  }
+
+  if (!pendingCheck && gm.end_encounter && nextCampaign.encounter) {
+    nextCampaign.encounter = { ...nextCampaign.encounter, active: false };
+  }
+
+  if (
+    !pendingCheck &&
+    gm.start_encounter?.hostiles?.length &&
+    !nextCampaign.encounter?.active
+  ) {
+    const members = groupMembers(
+      nextCharacters,
+      nextCampaign.activePartyGroupId,
+    );
+    const enc = buildEncounter(members, gm.start_encounter.hostiles);
+    if (enc) {
+      nextCampaign.encounter = enc;
+      nextCampaign = alignActiveToEncounter(nextCampaign);
+    }
+  } else if (
+    nextCampaign.encounter?.active &&
+    !pendingCheck &&
+    !opts?.skipEncounterContinue &&
+    !opts?.skipActedTracking
+  ) {
+    nextCampaign.encounter = endIfResolved(
+      advanceTurn(nextCampaign.encounter),
+    );
+    nextCampaign = alignActiveToEncounter(nextCampaign);
+  }
+
+  if (gm.location_update?.hint) {
+    const hint = gm.location_update.hint;
+    nextCampaign = {
+      ...nextCampaign,
+      partyGroups: nextCampaign.partyGroups.map((g) =>
+        g.id === nextCampaign.activePartyGroupId
+          ? { ...g, locationHint: hint }
+          : g,
+      ),
+    };
+  }
+
   const toMark = [
     ...(opts?.markActedIds ?? []),
     ...(opts?.markActedId ? [opts.markActedId] : []),
   ];
-  if (!opts?.skipActedTracking && toMark.length && !pendingCheck) {
+  if (
+    !opts?.skipActedTracking &&
+    toMark.length &&
+    !pendingCheck &&
+    !nextCampaign.encounter?.active
+  ) {
     nextCampaign = markActedInGroup(nextCampaign, toMark);
+    nextCampaign = advanceTurnInGroup(nextCampaign, nextCharacters);
+  }
+
+  const activeNow = nextCharacters.find(
+    (c) => c.id === nextCampaign.activeCharacterId,
+  );
+  if (
+    activeNow &&
+    isCharacterDown(activeNow) &&
+    !pendingCheck &&
+    !nextCampaign.encounter?.active
+  ) {
+    nextCampaign = markActedInGroup(nextCampaign, [activeNow.id]);
     nextCampaign = advanceTurnInGroup(nextCampaign, nextCharacters);
   }
 
@@ -1755,6 +2059,11 @@ async function applyGmResponse(
           ...gm.ask_dialogue,
           fromCharacterId:
             gm.ask_dialogue.fromCharacterId || activeCharacterId,
+          to: humanizeDialogueTo(
+            gm.ask_dialogue.to,
+            nextCharacters,
+            nextNodes,
+          ),
         }
       : null;
 
@@ -1790,6 +2099,300 @@ async function applyGmResponse(
     nextCampaign.ttsMuted,
     gm.speech_lines?.length ? gm.speech_lines : null,
   );
+
+  if (!pendingCheck && !opts?.skipEncounterContinue) {
+    void maybeContinueEncounter(get, set);
+  }
+}
+
+function alignActiveToEncounter(campaign: Campaign): Campaign {
+  const cur = currentCombatant(campaign.encounter);
+  if (!cur?.characterId) return campaign;
+  return {
+    ...campaign,
+    activeCharacterId: cur.characterId,
+    partyGroups: campaign.partyGroups.map((g) =>
+      g.id === campaign.activePartyGroupId
+        ? { ...g, activeCharacterId: cur.characterId! }
+        : g,
+    ),
+  };
+}
+
+async function persistEncounter(
+  campaign: Campaign,
+  characters: Character[],
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+) {
+  const next = touch(campaign);
+  await db.campaigns.put(next);
+  for (const ch of characters) await db.characters.put(ch);
+  set({ campaign: next, characters });
+}
+
+async function maybeContinueEncounter(
+  get: () => CampaignState,
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+) {
+  const { campaign } = get();
+  if (!campaign?.encounter?.active || campaign.pendingCheck) return;
+  const cur = currentCombatant(campaign.encounter);
+  if (cur?.side === "pc" && cur.characterId) {
+    const aligned = alignActiveToEncounter(campaign);
+    if (aligned.activeCharacterId !== campaign.activeCharacterId) {
+      await persistEncounter(aligned, get().characters, set);
+    }
+    return;
+  }
+  if (cur?.side === "hostile") {
+    await runHostileTurns(get, set);
+  }
+}
+
+async function runHostileTurns(
+  get: () => CampaignState,
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+) {
+  for (let i = 0; i < 6; i++) {
+    const { campaign } = get();
+    if (!campaign?.encounter?.active || campaign.pendingCheck) break;
+    const cur = currentCombatant(campaign.encounter);
+    if (!cur || cur.side !== "hostile") break;
+    await runOneHostileTurn(get, set);
+  }
+}
+
+async function runOneHostileTurn(
+  get: () => CampaignState,
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+) {
+  const state = get();
+  let campaign = state.campaign;
+  let characters = state.characters;
+  if (!campaign?.encounter?.active) return;
+  let encounter = syncPcCombatants(campaign.encounter, characters);
+  const attacker = currentCombatant(encounter);
+  if (!attacker || attacker.side !== "hostile") return;
+  const defender = pickHostileTarget(encounter);
+  if (!defender) {
+    encounter = { ...encounter, active: false };
+    await persistEncounter({ ...campaign, encounter }, characters, set);
+    return;
+  }
+
+  set({ busy: true, error: null });
+  const { result, nextDefender } = resolveAttack(attacker, defender);
+  encounter = applyCombatantPatch(encounter, nextDefender.id, {
+    hp: nextDefender.hp,
+  });
+  encounter = endIfResolved(encounter);
+
+  if (defender.characterId) {
+    characters = characters.map((c) =>
+      c.id === defender.characterId
+        ? { ...c, hp: Math.max(0, Math.min(c.maxHp, nextDefender.hp)) }
+        : c,
+    );
+  }
+
+  const rollMsg: Message = {
+    id: nanoid(),
+    campaignId: campaign.id,
+    role: "gm",
+    text: formatAttackLine(result),
+    createdAt: Date.now(),
+  };
+  await db.messages.add(rollMsg);
+
+  campaign = touch({ ...campaign, encounter });
+  await persistEncounter(campaign, characters, set);
+  set({ messages: [...get().messages, rollMsg] });
+
+  try {
+    await flavorCombatResult("resolve_npc", result, attacker.characterId || characters[0]?.id || "", get, set);
+  } catch {
+    /* narration optionnelle */
+  }
+
+  const after = get();
+  if (!after.campaign?.encounter?.active) {
+    set({ busy: false });
+    return;
+  }
+  const advanced = alignActiveToEncounter({
+    ...after.campaign,
+    encounter: endIfResolved(advanceTurn(after.campaign.encounter)),
+  });
+  await persistEncounter(advanced, after.characters, set);
+  set({ busy: false });
+}
+
+async function runPlayerAttackTurn(
+  labeled: string,
+  leaderId: string,
+  targetCombatantId: string | undefined,
+  get: () => CampaignState,
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+) {
+  const state = get();
+  let campaign = state.campaign;
+  const characters = state.characters;
+  if (!campaign?.encounter?.active) return;
+  let encounter = syncPcCombatants(campaign.encounter, characters);
+  const attacker = encounter.combatants.find(
+    (c) => c.characterId === leaderId && c.side === "pc",
+  );
+  if (!attacker || attacker.hp <= 0) {
+    set({ busy: false, error: "Ce personnage ne peut pas attaquer." });
+    return;
+  }
+  const hostiles = living(encounter, "hostile");
+  const defender =
+    hostiles.find((c) => c.id === targetCombatantId) || hostiles[0];
+  if (!defender) {
+    set({ busy: false, error: "Aucune cible debout." });
+    return;
+  }
+
+  const { result, nextDefender } = resolveAttack(attacker, defender);
+  encounter = applyCombatantPatch(encounter, nextDefender.id, {
+    hp: nextDefender.hp,
+  });
+  encounter.lastAttackerId = attacker.id;
+  encounter = endIfResolved(encounter);
+
+  const rollMsg: Message = {
+    id: nanoid(),
+    campaignId: campaign.id,
+    role: "player",
+    characterId: leaderId,
+    text: formatAttackLine(result),
+    createdAt: Date.now(),
+  };
+  await db.messages.add(rollMsg);
+  campaign = touch({ ...campaign, encounter });
+  await persistEncounter(campaign, characters, set);
+  set({ messages: [...get().messages, rollMsg] });
+
+  try {
+    await flavorCombatResult("resolve_attack", result, leaderId, get, set, labeled);
+  } catch (e) {
+    set({
+      busy: false,
+      error: e instanceof Error ? e.message : "Erreur de résolution",
+    });
+    return;
+  }
+
+  const after = get();
+  if (!after.campaign?.encounter) {
+    set({ busy: false });
+    return;
+  }
+  let nextEnc = after.campaign.encounter;
+  if (nextEnc.active) {
+    nextEnc = endIfResolved(advanceTurn(nextEnc));
+  }
+  const advanced = alignActiveToEncounter({
+    ...after.campaign,
+    encounter: nextEnc,
+  });
+  await persistEncounter(advanced, after.characters, set);
+  set({ busy: false });
+  await maybeContinueEncounter(get, set);
+}
+
+async function flavorCombatResult(
+  mode: "resolve_npc" | "resolve_attack",
+  result: AttackResult,
+  activeCharacterId: string,
+  get: () => CampaignState,
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+  action?: string,
+) {
+  const state = get();
+  const {
+    campaign,
+    characters,
+    messages,
+    pdfChunks,
+    loreEntries,
+    scenarioBeats,
+    graphNodes,
+    graphEdges,
+    assets,
+  } = state;
+  if (!campaign) return;
+  const assetMeta = assets.map(({ blob: _b, ...meta }) => meta);
+  const cursor = campaign.scenarioCursor;
+  const body: GmTurnRequest = {
+    mode,
+    action,
+    activeCharacterId,
+    campaign: campaignPayload(campaign),
+    characters,
+    recentMessages: recentTableForPrompt(messages, 12),
+    pdfChunks: mapLore(
+      buildLorePack(pdfChunks, `${result.attackerName} ${result.defenderName}`, {
+        cursor,
+        windowBefore: 1,
+        windowAfter: 1,
+        relevantCount: 4,
+      }),
+    ),
+    scenarioBeats: beatsForPrompt(scenarioBeats, cursor, 1),
+    loreEntries: pickLoreForTurn(
+      loreEntries,
+      `${result.attackerName} ${result.defenderName}`,
+      graphNodes,
+      scenarioBeats,
+      cursor,
+    ),
+    ...graphPayload(graphNodes, graphEdges),
+    assets: assetMeta,
+    attackResult: result,
+    hereNow: hereNowPayload(campaign, characters, messages, scenarioBeats),
+    encounterSummary: encounterSummaryForPrompt(campaign.encounter),
+  };
+  const res = await fetch("/api/gm-turn", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Le MJ ne répond pas");
+  }
+  const gm = (await res.json()) as GmTurnResponse;
+  await applyGmResponse(gm, action || result.attackerName, activeCharacterId, get, set, {
+    skipActedTracking: true,
+    skipEncounterContinue: true,
+    countsTowardBeat: mode === "resolve_attack",
+  });
 }
 
 function partyTurnMeta(
@@ -1808,7 +2411,7 @@ function partyTurnMeta(
       .filter((c) => acted.has(c.id))
       .map((c) => c.name),
     waitingCharacterNames: members
-      .filter((c) => !acted.has(c.id))
+      .filter((c) => !acted.has(c.id) && !isCharacterDown(c))
       .map((c) => c.name),
     jointParticipantNames: (jointIds ?? [])
       .map((id) => ensured.characters.find((c) => c.id === id)?.name)

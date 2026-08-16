@@ -5,6 +5,7 @@ import {
   HarmCategory,
 } from "@google/generative-ai";
 import { isVaguePlayerAction } from "@/lib/gm/action-guard";
+import { buildCheckSetupNarration } from "@/lib/gm/check-setup";
 import { buildSystemPrompt, buildUserPrompt } from "@/lib/gm/prompt";
 import { parseGmResponse } from "@/lib/gm/tools";
 import type { GmTurnRequest } from "@/lib/types";
@@ -192,7 +193,9 @@ export async function POST(request: Request) {
     if (
       body.mode === "intro" ||
       body.mode === "relance" ||
-      body.mode === "resolve_check"
+      body.mode === "resolve_check" ||
+      body.mode === "resolve_npc" ||
+      body.mode === "resolve_attack"
     ) {
       parsed.propose_check = null;
     }
@@ -209,9 +212,39 @@ export async function POST(request: Request) {
     if (body.mode === "intro" || body.mode === "relance") {
       parsed.advance_scenario = 0;
     }
-    // Don't advance while also asking for a check — finish the action first.
+    if (body.mode === "resolve_npc" || body.mode === "resolve_attack") {
+      parsed.hp_updates = [];
+      parsed.propose_check = null;
+      parsed.start_encounter = null;
+      if (body.mode === "resolve_npc") {
+        parsed.end_encounter = false;
+        parsed.inventory_updates = [];
+        parsed.advance_scenario = 0;
+      }
+    }
+    // Don't resolve the world before the die — stake-only narration.
     if (parsed.propose_check) {
+      const who =
+        body.characters.find((c) => c.id === body.activeCharacterId)?.name ||
+        "Le personnage";
+      parsed.narration = buildCheckSetupNarration({
+        characterName: who,
+        action: body.action || parsed.propose_check.reason,
+        attribute: parsed.propose_check.attribute,
+        dc: parsed.propose_check.dc,
+        reason: parsed.propose_check.reason,
+      });
+      parsed.update_graph = { nodes: [], edges: [] };
+      parsed.inventory_updates = [];
+      parsed.hp_updates = [];
+      parsed.party_split = null;
+      parsed.play_asset = null;
       parsed.advance_scenario = 0;
+      parsed.ask_dialogue = null;
+      parsed.location_update = null;
+      parsed.session_summary_update = null;
+      parsed.start_encounter = null;
+      parsed.end_encounter = false;
     }
     if (typeof parsed.advance_scenario !== "number") {
       parsed.advance_scenario = 0;

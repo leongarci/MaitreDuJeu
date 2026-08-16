@@ -1,13 +1,17 @@
 import type {
   Attribute,
+  CombatProfile,
   GmTurnResponse,
   GraphEdgeCategory,
   GraphNodeType,
+  HpUpdate,
   InventoryUpdate,
   PartySplitUpdate,
   PendingDialogue,
   SpeechLine,
+  StartEncounterHostile,
 } from "@/lib/types";
+import { COMBAT_PROFILES_LIST } from "@/lib/combat/profiles";
 import { ATTRIBUTES } from "@/lib/types";
 
 const NODE_TYPES: GraphNodeType[] = [
@@ -259,6 +263,70 @@ export function parseGmResponse(raw: string): GmTurnResponse {
     }
   }
 
+  const hp_updates: HpUpdate[] = [];
+  if (Array.isArray(data.hp_updates)) {
+    for (const item of data.hp_updates) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const characterId =
+        typeof row.characterId === "string" ? row.characterId.trim() : "";
+      const characterName =
+        typeof row.characterName === "string" ? row.characterName.trim() : "";
+      if (!characterId && !characterName) continue;
+      const hp =
+        typeof row.hp === "number" && Number.isFinite(row.hp)
+          ? Math.round(row.hp)
+          : undefined;
+      const delta =
+        typeof row.delta === "number" && Number.isFinite(row.delta)
+          ? Math.round(row.delta)
+          : undefined;
+      if (hp === undefined && delta === undefined) continue;
+      hp_updates.push({
+        characterId: characterId || undefined,
+        characterName: characterName || undefined,
+        hp,
+        delta,
+      });
+    }
+  }
+
+  let location_update: GmTurnResponse["location_update"] = null;
+  const loc = data.location_update;
+  if (loc && typeof loc === "object") {
+    const hint = (loc as Record<string, unknown>).hint;
+    if (typeof hint === "string" && hint.trim()) {
+      location_update = { hint: hint.trim().slice(0, 80) };
+    }
+  }
+
+  let start_encounter: GmTurnResponse["start_encounter"] = null;
+  const se = data.start_encounter;
+  if (se && typeof se === "object") {
+    const hostilesRaw = (se as Record<string, unknown>).hostiles;
+    if (Array.isArray(hostilesRaw)) {
+      const hostiles: StartEncounterHostile[] = [];
+      for (const item of hostilesRaw) {
+        if (!item || typeof item !== "object") continue;
+        const row = item as Record<string, unknown>;
+        if (typeof row.name !== "string" || !row.name.trim()) continue;
+        const profile =
+          typeof row.profile === "string" &&
+          (COMBAT_PROFILES_LIST as string[]).includes(row.profile)
+            ? (row.profile as CombatProfile)
+            : undefined;
+        const count =
+          typeof row.count === "number" && Number.isFinite(row.count)
+            ? Math.max(1, Math.min(8, Math.round(row.count)))
+            : undefined;
+        hostiles.push({ name: row.name.trim().slice(0, 40), profile, count });
+      }
+      if (hostiles.length) start_encounter = { hostiles };
+    }
+  }
+
+  const end_encounter = data.end_encounter === true;
+
   return {
     narration,
     propose_check,
@@ -271,5 +339,9 @@ export function parseGmResponse(raw: string): GmTurnResponse {
     party_split,
     consume_turn,
     inventory_updates,
+    hp_updates,
+    location_update,
+    start_encounter,
+    end_encounter,
   };
 }

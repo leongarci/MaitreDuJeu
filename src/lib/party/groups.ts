@@ -84,6 +84,10 @@ export function ensurePartyState(
   };
 }
 
+export function isCharacterDown(c: Character): boolean {
+  return (c.hp ?? 0) <= 0;
+}
+
 export function groupMembers(
   characters: Character[],
   groupId: string | null | undefined,
@@ -98,9 +102,8 @@ export function nextWaitingCharacterId(
 ): string | null {
   const members = groupMembers(characters, group.id);
   const acted = new Set(group.actedThisRound);
-  const waiting = members.filter((c) => !acted.has(c.id));
+  const waiting = members.filter((c) => !acted.has(c.id) && !isCharacterDown(c));
   if (waiting.length === 0) return null;
-  // Prefer stable list order; if current is waiting keep? No — always first waiting.
   return waiting[0]!.id;
 }
 
@@ -152,7 +155,9 @@ export function resetGroupRound(
     g.id === groupId ? { ...g, actedThisRound: [] } : g,
   );
   const group = groups.find((g) => g.id === groupId)!;
-  const first = groupMembers(characters, groupId)[0]?.id ?? null;
+  const members = groupMembers(characters, groupId);
+  const first =
+    members.find((c) => !isCharacterDown(c))?.id ?? members[0]?.id ?? null;
   const withActive = groups.map((g) =>
     g.id === groupId ? { ...g, activeCharacterId: first } : g,
   );

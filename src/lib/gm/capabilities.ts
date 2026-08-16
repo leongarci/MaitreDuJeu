@@ -46,6 +46,24 @@ export const GM_CAPABILITIES: GmCapability[] = [
     when: "Loot, don, perte, consommation d’objet",
   },
   {
+    id: "hp_updates",
+    label: "Points de vie",
+    description: "Appliquer dégâts / soins. 0 PV = hors combat.",
+    when: "Toute blessure ou soin narré",
+  },
+  {
+    id: "location_update",
+    label: "Lieu actuel",
+    description: "Ancrer le groupe actif dans un lieu nommé.",
+    when: "Changement de lieu ou confirmation",
+  },
+  {
+    id: "ooc_chat",
+    label: "Chat hors-jeu",
+    description: "Répondre aux questions de table sans PNJ ni tour.",
+    when: "Panneau Hors-jeu — règles, UI, savoir déjà acquis",
+  },
+  {
     id: "speech_lines",
     label: "Répliques vocales",
     description: "Voix unique Mimir (VoiceStudio) — texte affiché = texte lu.",
@@ -87,6 +105,13 @@ export const GM_CAPABILITIES: GmCapability[] = [
     label: "Résumé de session",
     description: "Mettre à jour le résumé de situation pour la mémoire.",
     when: "Fin de séquence utile",
+  },
+  {
+    id: "start_encounter",
+    label: "Affrontement",
+    description:
+      "Démarrer un combat (fiches, CA, initiative). Les tours ennemis sont locaux.",
+    when: "Hostiles qui passent à l’attaque — start_encounter",
   },
   {
     id: "stay_and_wait",
