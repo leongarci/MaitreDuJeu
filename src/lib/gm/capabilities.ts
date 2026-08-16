@@ -66,8 +66,9 @@ export const GM_CAPABILITIES: GmCapability[] = [
   {
     id: "speech_lines",
     label: "Répliques vocales",
-    description: "Voix unique Mimir (VoiceStudio) — texte affiché = texte lu.",
-    when: "Toujours ; speech_lines optionnel / ignoré à l'oral",
+    description:
+      "Narrateur VoiceStudio (Mimir) ou Pollinations ; PNJ/PJ via Pollinations si speech_lines.",
+    when: "Toujours ; speech_lines optionnel",
   },
   {
     id: "party_split",

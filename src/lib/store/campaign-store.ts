@@ -10,6 +10,7 @@ import {
   rollRandomAttributes,
   startingHp,
 } from "@/lib/rules/d20";
+import { playAmbientLoop, stopAmbient } from "@/lib/client/ambient";
 import { speakNarration, stopTts } from "@/lib/client/tts";
 import { buildLorePack } from "@/lib/rag/retrieve";
 import { beatsForPrompt } from "@/lib/scenario/beats";
@@ -39,7 +40,18 @@ import {
   syncPcCombatants,
 } from "@/lib/combat/engine";
 import {
+  ambientStylePrompt,
+  DEFAULT_ART_STYLE,
+  inferArtStyle,
+  isArtStyleId,
+  styleTag,
+  type ArtStyleId,
+} from "@/lib/scene/art-style";
+import {
+  AMBIENT_TAG,
+  buildAmbientPrompt,
   buildScenePrompt,
+  findGeneratedAmbient,
   findGeneratedScene,
   GENERATED_TAG,
   isGeneratedAsset,
@@ -190,6 +202,7 @@ function normalizeCampaign(campaign: Campaign): Campaign {
     activePartyGroupId: campaign.activePartyGroupId ?? null,
     pendingJointAction: campaign.pendingJointAction ?? null,
     encounter: campaign.encounter ?? null,
+    artStyle: campaign.artStyle || "",
   };
 }
 
@@ -484,6 +497,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     const prev = get();
     revoke(prev.sceneUrl);
     stopTts();
+    stopAmbient();
     sceneGenSeq += 1;
 
     let sceneUrl: string | null = null;
@@ -541,6 +555,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       activePartyGroupId: group.id,
       pendingJointAction: null,
       encounter: null,
+      artStyle: inferArtStyle(title),
       createdAt: now,
       updatedAt: now,
     };
@@ -631,6 +646,10 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   },
 
   deleteCampaign: async (id) => {
+    if (get().campaign?.id === id) {
+      stopTts();
+      stopAmbient();
+    }
     await Promise.all([
       db.campaigns.delete(id),
       db.characters.where("campaignId").equals(id).delete(),
@@ -668,7 +687,10 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   setTtsMuted: async (muted) => {
     const { campaign } = get();
     if (!campaign) return;
-    if (muted) stopTts();
+    if (muted) {
+      stopTts();
+      stopAmbient();
+    }
     const next = touch({ ...campaign, ttsMuted: muted });
     await db.campaigns.put(next);
     set({ campaign: next });
@@ -2176,6 +2198,34 @@ async function applySceneAsset(
   scheduleSync(get);
 }
 
+function resolveArtStyle(state: CampaignState): ArtStyleId {
+  const stored = state.campaign?.artStyle;
+  if (isArtStyleId(stored)) return stored;
+  const corpus = [
+    state.campaign?.title ?? "",
+    state.campaign?.sessionSummary ?? "",
+    ...state.scenarioBeats.slice(0, 6).flatMap((b) => [b.title, b.playerText, b.mjNotes]),
+    ...state.loreEntries.slice(0, 8).map((e) => `${e.name} ${e.summary}`),
+  ].join("\n");
+  return inferArtStyle(corpus) || DEFAULT_ART_STYLE;
+}
+
+async function persistArtStyle(
+  style: ArtStyleId,
+  get: () => CampaignState,
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+) {
+  const campaign = get().campaign;
+  if (!campaign || campaign.artStyle === style) return;
+  const next = touch({ ...campaign, artStyle: style });
+  await db.campaigns.put(next);
+  set({ campaign: next });
+}
+
 async function maybeGenerateLocationScene(opts: {
   get: () => CampaignState;
   set: (
@@ -2198,48 +2248,128 @@ async function maybeGenerateLocationScene(opts: {
   const prevKey = normalizeLocationKey(opts.prevHint);
   if (opts.hadScene && prevKey && key === prevKey) return;
 
-  const existing = findGeneratedScene(opts.get().assets, key);
-  if (existing) {
-    await applySceneAsset(existing, opts.get, opts.set);
-    return;
-  }
+  const style = resolveArtStyle(opts.get());
+  await persistArtStyle(style, opts.get, opts.set);
 
+  const existing = findGeneratedScene(opts.get().assets, key, style);
   const seq = ++sceneGenSeq;
-  opts.set({ sceneGenerating: true });
-  try {
-    const res = await fetch("/api/generate-image", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: buildScenePrompt(opts.nextHint, opts.title, opts.narration),
-        seed: sceneSeed(opts.campaignId, key),
-      }),
-    });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    if (blob.size < 1024) return;
-    if (seq !== sceneGenSeq) return;
-    const state = opts.get();
-    if (state.campaign?.id !== opts.campaignId) return;
 
-    const asset: Asset = {
-      id: nanoid(),
-      campaignId: opts.campaignId,
-      name: opts.nextHint.trim() || opts.title.trim() || "Scène",
-      type: "image",
-      tags: [GENERATED_TAG, "scene", locationTag(key)],
-      mimeType: blob.type || "image/jpeg",
-      blob,
-    };
-    await db.assets.add(asset);
-    const latest = opts.get();
-    if (latest.campaign?.id !== opts.campaignId || seq !== sceneGenSeq) return;
-    opts.set({ assets: [...latest.assets, asset] });
-    await applySceneAsset(asset, opts.get, opts.set);
+  try {
+    if (existing) {
+      await applySceneAsset(existing, opts.get, opts.set);
+    } else {
+      opts.set({ sceneGenerating: true });
+      const res = await fetch("/api/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: buildScenePrompt(
+            opts.nextHint,
+            opts.title,
+            opts.narration,
+            style,
+          ),
+          seed: sceneSeed(opts.campaignId, key),
+        }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob.size >= 1024 && seq === sceneGenSeq) {
+          const state = opts.get();
+          if (state.campaign?.id === opts.campaignId) {
+            const asset: Asset = {
+              id: nanoid(),
+              campaignId: opts.campaignId,
+              name: opts.nextHint.trim() || opts.title.trim() || "Scène",
+              type: "image",
+              tags: [GENERATED_TAG, "scene", locationTag(key), styleTag(style)],
+              mimeType: blob.type || "image/jpeg",
+              blob,
+            };
+            await db.assets.add(asset);
+            const latest = opts.get();
+            if (latest.campaign?.id === opts.campaignId && seq === sceneGenSeq) {
+              opts.set({ assets: [...latest.assets, asset] });
+              await applySceneAsset(asset, opts.get, opts.set);
+            }
+          }
+        }
+      }
+    }
   } catch (e) {
     console.warn("Illustration de scène ignorée", e);
   } finally {
     if (seq === sceneGenSeq) opts.set({ sceneGenerating: false });
+  }
+
+  void maybeGenerateLocationAmbient({
+    get: opts.get,
+    set: opts.set,
+    campaignId: opts.campaignId,
+    title: opts.title,
+    hint: opts.nextHint,
+    key,
+    style,
+  });
+}
+
+async function maybeGenerateLocationAmbient(opts: {
+  get: () => CampaignState;
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void;
+  campaignId: string;
+  title: string;
+  hint: string;
+  key: string;
+  style: ArtStyleId;
+}) {
+  const muted = Boolean(opts.get().campaign?.ttsMuted);
+  if (muted) return;
+
+  const cached = findGeneratedAmbient(opts.get().assets, opts.key, opts.style);
+  if (cached) {
+    await playAmbientLoop(cached.blob, muted);
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/generate-audio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "sfx",
+        prompt: buildAmbientPrompt(
+          opts.hint,
+          opts.title,
+          opts.style,
+          ambientStylePrompt(opts.style),
+        ),
+      }),
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    if (blob.size < 256) return;
+    if (opts.get().campaign?.id !== opts.campaignId) return;
+
+    const asset: Asset = {
+      id: nanoid(),
+      campaignId: opts.campaignId,
+      name: `Ambiance ${opts.hint.trim() || opts.title}`.trim(),
+      type: "audio",
+      tags: [GENERATED_TAG, AMBIENT_TAG, locationTag(opts.key), styleTag(opts.style)],
+      mimeType: blob.type || "audio/mpeg",
+      blob,
+    };
+    await db.assets.add(asset);
+    const latest = opts.get();
+    if (latest.campaign?.id !== opts.campaignId) return;
+    opts.set({ assets: [...latest.assets, asset] });
+    await playAmbientLoop(asset.blob, Boolean(latest.campaign.ttsMuted));
+  } catch (e) {
+    console.warn("Ambiance de scène ignorée", e);
   }
 }
 

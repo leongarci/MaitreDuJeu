@@ -42,6 +42,7 @@ export function campaignToRow(c: Campaign) {
     active_party_group_id: c.activePartyGroupId ?? null,
     pending_joint_action: c.pendingJointAction ?? null,
     encounter: c.encounter ?? null,
+    art_style: c.artStyle || "",
     created_at: c.createdAt,
     updated_at: c.updatedAt,
   };
@@ -71,6 +72,7 @@ export function rowToCampaign(row: Record<string, unknown>): Campaign {
     pendingJointAction:
       (row.pending_joint_action as PendingJointAction | null) ?? null,
     encounter: (row.encounter as Encounter | null) ?? null,
+    artStyle: String(row.art_style || ""),
     createdAt: Number(row.created_at ?? Date.now()),
     updatedAt: Number(row.updated_at ?? Date.now()),
   };

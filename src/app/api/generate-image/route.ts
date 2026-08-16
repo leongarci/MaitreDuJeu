@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 
 const DEFAULT_BASE = "https://image.pollinations.ai/prompt";
 const DEFAULT_MODEL = "flux";
-const MAX_PROMPT = 500;
+const MAX_PROMPT = 700;
 const WIDTH = 1280;
 const HEIGHT = 720;
 const TIMEOUT_MS = 50_000;

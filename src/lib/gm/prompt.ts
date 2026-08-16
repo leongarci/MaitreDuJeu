@@ -74,7 +74,10 @@ category: social | spatial | plot | inventory. affinity -3..+3.
 Situations sociales seulement. to = nom lisible (« pnj:Nom » / « pj:Nom » / « groupe »), JAMAIS un id technique.
 
 ## RÉPLIQUES
-narration = texte EXACT affiché et lu. speech_lines: [].
+narration = texte EXACT affiché.
+speech_lines optionnel: découpe orale courte. speaker = narrator | pnj:Nom | pj:Nom.
+Si speech_lines est non vide, il est lu à la place de la narration (doit couvrir tout le parlé).
+Sinon speech_lines=[] et la narration entière est lue par le narrateur.
 
 ## SOUS-GROUPES
 party_split seulement si le groupe se sépare ou se réunit vraiment. Tous les PJ listés.

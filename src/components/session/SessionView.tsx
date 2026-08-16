@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CharacterDrawer } from "@/components/character/CharacterDrawer";
 import { DiceModal } from "@/components/dice/DiceModal";
 import { EncounterBanner } from "@/components/session/EncounterBanner";
+import { SceneBanner } from "@/components/session/SceneBanner";
 import { OocChat } from "@/components/session/OocChat";
 import { useDeviceMode } from "@/hooks/useDeviceMode";
 import { getLastTtsError } from "@/lib/client/tts";
@@ -432,20 +433,14 @@ export function SessionView({ campaignId }: Props) {
               onSelectTarget={setTargetId}
             />
           )}
-          {sceneUrl ? (
-            <div className="fade-in mb-4 overflow-hidden rounded-2xl border border-line">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={sceneUrl}
-                alt="Scène"
-                className="h-40 w-full object-cover md:h-56"
-              />
-            </div>
-          ) : sceneGenerating ? (
-            <div className="pulse-soft mb-4 flex h-40 items-center justify-center rounded-2xl border border-line bg-ink/40 text-sm text-parchment-dim md:h-56">
-              Illustration de la scène…
-            </div>
-          ) : null}
+          <SceneBanner
+            sceneUrl={sceneUrl}
+            sceneGenerating={sceneGenerating}
+            locationHint={
+              campaign?.partyGroups.find((g) => g.id === campaign.activePartyGroupId)
+                ?.locationHint
+            }
+          />
 
           <div className="space-y-3">
             {icMessages.length === 0 && !hasEverHadMessages.current && (

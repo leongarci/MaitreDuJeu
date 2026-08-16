@@ -1,5 +1,6 @@
-/** TTS: VoiceStudio only — voix unique Mimir. */
+/** TTS: VoiceStudio (Mimir) + secours / répliques Pollinations. */
 
+import { speakPollinationsLine } from "@/lib/client/pollinations-tts";
 import type { SpeechLine } from "@/lib/types";
 import {
   DEFAULT_NARRATOR_VOICE_NAME,
@@ -18,14 +19,20 @@ export function getLastTtsError(): string | null {
   return lastError;
 }
 
-/** Always one narrator line — multi-voice disabled (Mimir only). */
 export function planSpeechLines(
   narration: string,
-  _lines?: SpeechLine[] | null,
+  lines?: SpeechLine[] | null,
 ): SpeechLine[] {
+  const cleaned = (lines ?? []).filter((l) => l.text.trim() && l.speaker.trim());
+  if (cleaned.length) return cleaned;
   const text = narration.trim();
   if (!text) return [];
   return [{ speaker: "narrator", text }];
+}
+
+function isNarrator(speaker: string): boolean {
+  const s = speaker.trim().toLowerCase();
+  return !s || s === "narrator" || s === "mj" || s === "narrateur";
 }
 
 export function stopTts(): void {
@@ -88,22 +95,35 @@ export async function speakNarration(
   speaking = true;
   await unlockAudio();
 
+  const planned = planSpeechLines(text, _lines);
   const detail = await probeLocalTtsDetail();
-  if (!detail.ok && !detail.speechReady) {
-    lastError =
-      detail.hint ||
-      "VoiceStudio indisponible — aucune voix de secours. Ouvre OmniVoice puis réessaie.";
-    speaking = false;
-    return;
+  const localReady = detail.ok || detail.speechReady;
+  if (localReady) {
+    await ensureVoiceCast();
   }
-
-  await ensureVoiceCast();
-  const voiceId = await ensureNarratorVoiceId();
+  const voiceId = localReady ? await ensureNarratorVoiceId() : "";
 
   try {
-    const result = await speakLocalLine(text.trim(), voiceId);
-    if (!result.ok) {
-      lastError = result.error || "Échec VoiceStudio";
+    for (const line of planned) {
+      if (!speaking) return;
+      if (isNarrator(line.speaker) && localReady) {
+        const result = await speakLocalLine(line.text, voiceId);
+        if (result.ok) continue;
+        const fallback = await speakPollinationsLine(line.text, "narrator");
+        if (!fallback.ok) {
+          lastError = result.error || fallback.error || "Échec voix";
+        }
+        continue;
+      }
+      const spoken = await speakPollinationsLine(line.text, line.speaker);
+      if (!spoken.ok) {
+        if (isNarrator(line.speaker) && localReady) {
+          const result = await speakLocalLine(line.text, voiceId);
+          if (!result.ok) lastError = spoken.error || result.error || "Échec voix";
+        } else {
+          lastError = spoken.error || "Échec voix Pollinations";
+        }
+      }
     }
   } finally {
     speaking = false;

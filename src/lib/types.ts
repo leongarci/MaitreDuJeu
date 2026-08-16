@@ -88,6 +88,8 @@ export interface Campaign {
   activePartyGroupId: string | null;
   pendingJointAction?: PendingJointAction | null;
   encounter?: Encounter | null;
+  /** Visual / ambient tone inferred from the scenario (parchment, space…). */
+  artStyle?: string;
   createdAt: number;
   updatedAt: number;
 }
