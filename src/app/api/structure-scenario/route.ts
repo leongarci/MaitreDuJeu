@@ -4,15 +4,17 @@ import {
   HarmBlockThreshold,
   HarmCategory,
 } from "@google/generative-ai";
+import {
+  describeGeminiFailure,
+  geminiModelCandidates,
+  isMissingGeminiModel,
+  isTransientGeminiError,
+  sleep,
+} from "@/lib/gm/gemini";
 import type { StructuredBeatDraft } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-const MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-flash-latest",
-  "gemini-3.5-flash",
-];
+export const maxDuration = 300;
 
 /** Split long PDFs so each Gemini call can finish its JSON without truncating mid-scenario. */
 const SEGMENT_CHARS = 16_000;
@@ -29,10 +31,7 @@ const SAFETY = [
 }));
 
 function modelCandidates(): string[] {
-  const preferred = process.env.GEMINI_MODEL?.trim();
-  return preferred
-    ? [preferred, ...MODELS.filter((m) => m !== preferred)]
-    : MODELS;
+  return geminiModelCandidates();
 }
 
 function extractJson(raw: string): unknown {
@@ -197,26 +196,31 @@ async function structureSegment(
 ): Promise<StructuredBeatDraft[]> {
   let lastError: unknown;
   for (const modelName of modelCandidates()) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          temperature: 0.25,
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json",
-        },
-        safetySettings: SAFETY,
-      });
-      const result = await model.generateContent(prompt);
-      // Empty array is valid (reference-only segment).
-      return parseBeats(result.response.text());
-    } catch (e) {
-      lastError = e;
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("404") || msg.includes("429") || /not found/i.test(msg)) {
-        continue;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.25,
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json",
+          },
+          safetySettings: SAFETY,
+        });
+        const result = await model.generateContent(prompt);
+        // Empty array is valid (reference-only segment).
+        return parseBeats(result.response.text());
+      } catch (e) {
+        lastError = e;
+        const msg = e instanceof Error ? e.message : String(e);
+        if (isMissingGeminiModel(msg)) break;
+        if (isTransientGeminiError(msg) && attempt < 2) {
+          await sleep(700 * (attempt + 1) + Math.random() * 400);
+          continue;
+        }
+        if (isTransientGeminiError(msg)) break;
+        throw e instanceof Error ? e : new Error(msg);
       }
-      break;
     }
   }
   throw lastError instanceof Error
@@ -278,10 +282,20 @@ export async function POST(request: Request) {
       });
     } catch (lastError) {
       console.warn("structure-scenario fallback", lastError);
+      const reason = describeGeminiFailure(lastError);
+      if (allBeats.length > 0) {
+        return NextResponse.json({
+          beats: allBeats,
+          source: "partial",
+          parts: segments.length,
+          beatCount: allBeats.length,
+          warning: `${reason} Trame partielle (${allBeats.length} étapes).`,
+        });
+      }
       return NextResponse.json({
         beats: fallbackBeats(clipped),
         source: "fallback",
-        warning: "Structuration IA indisponible — découpage heuristique",
+        warning: `${reason} Découpage heuristique — réimporte le PDF dans une minute.`,
       });
     }
   } catch (e) {

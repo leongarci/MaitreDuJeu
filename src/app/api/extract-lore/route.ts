@@ -4,15 +4,16 @@ import {
   HarmBlockThreshold,
   HarmCategory,
 } from "@google/generative-ai";
+import {
+  geminiModelCandidates,
+  isMissingGeminiModel,
+  isTransientGeminiError,
+  sleep,
+} from "@/lib/gm/gemini";
 import type { LoreEntryDraft, LoreKind } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-const MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-flash-latest",
-  "gemini-3.5-flash",
-];
+export const maxDuration = 300;
 
 const SEGMENT_CHARS = 18_000;
 const MAX_INPUT_CHARS = 400_000;
@@ -37,10 +38,7 @@ const SAFETY = [
 }));
 
 function modelCandidates(): string[] {
-  const preferred = process.env.GEMINI_MODEL?.trim();
-  return preferred
-    ? [preferred, ...MODELS.filter((m) => m !== preferred)]
-    : MODELS;
+  return geminiModelCandidates();
 }
 
 function extractJson(raw: string): unknown {
@@ -196,7 +194,9 @@ async function extractSegment(
     } catch (e) {
       lastError = e;
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("404") || msg.includes("429") || /not found/i.test(msg)) {
+      if (isMissingGeminiModel(msg)) continue;
+      if (isTransientGeminiError(msg)) {
+        await sleep(700);
         continue;
       }
       break;

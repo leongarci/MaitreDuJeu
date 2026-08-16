@@ -6,18 +6,17 @@ import {
 } from "@google/generative-ai";
 import { isVaguePlayerAction } from "@/lib/gm/action-guard";
 import { buildCheckSetupNarration } from "@/lib/gm/check-setup";
+import {
+  geminiModelCandidates,
+  isMissingGeminiModel,
+  isTransientGeminiError,
+  sleep,
+} from "@/lib/gm/gemini";
 import { buildSystemPrompt, buildUserPrompt } from "@/lib/gm/prompt";
 import { parseGmResponse } from "@/lib/gm/tools";
 import type { GmTurnRequest } from "@/lib/types";
 
 export const runtime = "nodejs";
-
-const DEFAULT_MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-flash-latest",
-  "gemini-3.5-flash",
-  "gemini-2.5-flash",
-];
 
 const SAFETY = [
   HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -30,10 +29,7 @@ const SAFETY = [
 }));
 
 function modelCandidates(): string[] {
-  const preferred = process.env.GEMINI_MODEL?.trim();
-  return preferred
-    ? [preferred, ...DEFAULT_MODELS.filter((m) => m !== preferred)]
-    : DEFAULT_MODELS;
+  return geminiModelCandidates();
 }
 
 function friendlyGeminiError(err: unknown): { message: string; status: number } {
@@ -140,9 +136,22 @@ NOTE SÉCURITÉ: Si le contenu est borderline, reformule en comédie JDR fiction
     } catch (e) {
       lastError = e;
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("404") || msg.includes("not found") || (msg.includes("429") && msg.includes("limit: 0"))) {
+      if (
+        isMissingGeminiModel(msg) ||
+        (msg.includes("429") && msg.includes("limit: 0"))
+      ) {
         console.warn(`Gemini model ${modelName} failed, trying next…`, msg.slice(0, 180));
         continue;
+      }
+      if (isTransientGeminiError(msg)) {
+        console.warn(`Gemini ${modelName} transitoire, retry…`, msg.slice(0, 180));
+        await sleep(800);
+        try {
+          return await generateOnce(apiKey, modelName, baseParts);
+        } catch (e2) {
+          lastError = e2;
+          continue;
+        }
       }
       if (/PROHIBITED_CONTENT/i.test(msg)) {
         try {

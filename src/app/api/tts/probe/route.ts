@@ -56,15 +56,12 @@ export async function GET() {
   }
 
   if (!apiOk) {
-    return NextResponse.json(
-      {
-        ok: false,
-        speechReady: false,
-        base,
-        hint: "Lance VoiceStudio (backend :3900), puis réessaie.",
-      },
-      { status: 503 },
-    );
+    return NextResponse.json({
+      ok: false,
+      speechReady: false,
+      base,
+      hint: "Lance VoiceStudio (backend :3900), puis réessaie.",
+    });
   }
 
   let model: ModelStatus | null = null;
