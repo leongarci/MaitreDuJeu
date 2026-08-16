@@ -9,6 +9,7 @@ PWA mobile (Next.js) — un téléphone, plusieurs joueurs en hotseat, un MJ IA.
 - Personnages manuels ou aléatoires (système d20 fixe)
 - Session hotseat + jets auto / manuel
 - Assets images / sons importés, déclenchés par le MJ
+- Illustrations de scène (Pollinations Flux) au changement de lieu
 - Voix du MJ via synthèse vocale du navigateur (gratuit)
 
 ## Prérequis
@@ -19,9 +20,10 @@ PWA mobile (Next.js) — un téléphone, plusieurs joueurs en hotseat, un MJ IA.
 ```env
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.0-flash
+POLLINATIONS_API_KEY=...
 ```
 
-Une seule clé : **Gemini** (free tier). Pas d’OpenAI en V1.
+**Gemini** (MJ, free tier). **Pollinations** (images de scène) : connecte-toi via GitHub sur [enter.pollinations.ai](https://enter.pollinations.ai/keys), crée une clé secrète `sk_…`, colle-la dans `POLLINATIONS_API_KEY`. Flux reste gratuit ; sans clé ça marche aussi, plus lent / filigrane possible.
 
 ## Lancer
 

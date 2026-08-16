@@ -38,6 +38,15 @@ import {
   resolveAttack,
   syncPcCombatants,
 } from "@/lib/combat/engine";
+import {
+  buildScenePrompt,
+  findGeneratedScene,
+  GENERATED_TAG,
+  isGeneratedAsset,
+  locationTag,
+  normalizeLocationKey,
+  sceneSeed,
+} from "@/lib/scene/location-image";
 import { generateJoinCode } from "@/lib/sync/codes";
 import {
   ensureSyncSchema,
@@ -100,6 +109,7 @@ interface CampaignState {
   oocBusy: boolean;
   error: string | null;
   sceneUrl: string | null;
+  sceneGenerating: boolean;
   syncStatus: string | null;
 
   initHome: () => Promise<void>;
@@ -192,6 +202,7 @@ function normalizeCharacter(c: Character, fallbackGroupId = ""): Character {
 }
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+let sceneGenSeq = 0;
 let syncChain: Promise<void> = Promise.resolve();
 
 function scheduleSync(get: () => CampaignState) {
@@ -430,6 +441,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   oocBusy: false,
   error: null,
   sceneUrl: null,
+  sceneGenerating: false,
   syncStatus: null,
 
   initHome: async () => {
@@ -472,6 +484,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     const prev = get();
     revoke(prev.sceneUrl);
     stopTts();
+    sceneGenSeq += 1;
 
     let sceneUrl: string | null = null;
     if (normalized.currentSceneAssetId) {
@@ -500,6 +513,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       graphEdges: dedupeById(graphEdges.map(normalizeEdge)),
       assets,
       sceneUrl,
+      sceneGenerating: false,
       error: null,
       ready: true,
     });
@@ -1878,6 +1892,10 @@ async function applyGmResponse(
   characters = ensured0.characters;
   if (!campaign) return;
 
+  const prevLocationHint =
+    campaign.partyGroups.find((g) => g.id === campaign.activePartyGroupId)
+      ?.locationHint ?? "";
+
   const gmMsg: Message = {
     id: nanoid(),
     campaignId: campaign.id,
@@ -2110,8 +2128,118 @@ async function applyGmResponse(
     gm.speech_lines?.length ? gm.speech_lines : null,
   );
 
+  const playedImportedImage = Boolean(
+    playId &&
+      state.assets.find(
+        (a) => a.id === playId && a.type === "image" && !isGeneratedAsset(a),
+      ),
+  );
+  if (!pendingCheck && !playedImportedImage) {
+    const nextLocationHint =
+      nextCampaign.partyGroups.find(
+        (g) => g.id === nextCampaign.activePartyGroupId,
+      )?.locationHint ?? "";
+    void maybeGenerateLocationScene({
+      get,
+      set,
+      campaignId: nextCampaign.id,
+      title: nextCampaign.title,
+      prevHint: prevLocationHint,
+      nextHint: nextLocationHint,
+      narration: gm.narration,
+      hadScene: Boolean(sceneUrl),
+    });
+  }
+
   if (!pendingCheck && !opts?.skipEncounterContinue) {
     void maybeContinueEncounter(get, set);
+  }
+}
+
+async function applySceneAsset(
+  asset: Asset,
+  get: () => CampaignState,
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void,
+) {
+  const state = get();
+  const campaign = state.campaign;
+  if (!campaign || campaign.id !== asset.campaignId) return;
+  revoke(state.sceneUrl);
+  const sceneUrl = URL.createObjectURL(asset.blob);
+  const next = touch({ ...campaign, currentSceneAssetId: asset.id });
+  await db.campaigns.put(next);
+  set({ campaign: next, sceneUrl, sceneGenerating: false });
+  scheduleSync(get);
+}
+
+async function maybeGenerateLocationScene(opts: {
+  get: () => CampaignState;
+  set: (
+    partial:
+      | Partial<CampaignState>
+      | ((s: CampaignState) => Partial<CampaignState>),
+  ) => void;
+  campaignId: string;
+  title: string;
+  prevHint: string;
+  nextHint: string;
+  narration: string;
+  hadScene: boolean;
+}) {
+  const key =
+    normalizeLocationKey(opts.nextHint) ||
+    (!opts.hadScene ? normalizeLocationKey(opts.title) : "");
+  if (!key) return;
+
+  const prevKey = normalizeLocationKey(opts.prevHint);
+  if (opts.hadScene && prevKey && key === prevKey) return;
+
+  const existing = findGeneratedScene(opts.get().assets, key);
+  if (existing) {
+    await applySceneAsset(existing, opts.get, opts.set);
+    return;
+  }
+
+  const seq = ++sceneGenSeq;
+  opts.set({ sceneGenerating: true });
+  try {
+    const res = await fetch("/api/generate-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: buildScenePrompt(opts.nextHint, opts.title, opts.narration),
+        seed: sceneSeed(opts.campaignId, key),
+      }),
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    if (blob.size < 1024) return;
+    if (seq !== sceneGenSeq) return;
+    const state = opts.get();
+    if (state.campaign?.id !== opts.campaignId) return;
+
+    const asset: Asset = {
+      id: nanoid(),
+      campaignId: opts.campaignId,
+      name: opts.nextHint.trim() || opts.title.trim() || "Scène",
+      type: "image",
+      tags: [GENERATED_TAG, "scene", locationTag(key)],
+      mimeType: blob.type || "image/jpeg",
+      blob,
+    };
+    await db.assets.add(asset);
+    const latest = opts.get();
+    if (latest.campaign?.id !== opts.campaignId || seq !== sceneGenSeq) return;
+    opts.set({ assets: [...latest.assets, asset] });
+    await applySceneAsset(asset, opts.get, opts.set);
+  } catch (e) {
+    console.warn("Illustration de scène ignorée", e);
+  } finally {
+    if (seq === sceneGenSeq) opts.set({ sceneGenerating: false });
   }
 }
 

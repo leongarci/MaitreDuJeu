@@ -28,6 +28,7 @@ export function SessionView({ campaignId }: Props) {
     busy,
     error,
     sceneUrl,
+    sceneGenerating,
     loadCampaign,
     setActiveCharacter,
     setTtsMuted,
@@ -431,7 +432,7 @@ export function SessionView({ campaignId }: Props) {
               onSelectTarget={setTargetId}
             />
           )}
-          {sceneUrl && (
+          {sceneUrl ? (
             <div className="fade-in mb-4 overflow-hidden rounded-2xl border border-line">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -440,7 +441,11 @@ export function SessionView({ campaignId }: Props) {
                 className="h-40 w-full object-cover md:h-56"
               />
             </div>
-          )}
+          ) : sceneGenerating ? (
+            <div className="pulse-soft mb-4 flex h-40 items-center justify-center rounded-2xl border border-line bg-ink/40 text-sm text-parchment-dim md:h-56">
+              Illustration de la scène…
+            </div>
+          ) : null}
 
           <div className="space-y-3">
             {icMessages.length === 0 && !hasEverHadMessages.current && (
