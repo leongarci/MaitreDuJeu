@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
+import {
+  fishApiKey,
+  fishNarratorId,
+  listFishVoices,
+  type FishVoice,
+} from "@/lib/tts/fish";
 
 export const runtime = "nodejs";
 
-function baseUrl(): string {
+function studioBase(): string {
   return (
     process.env.TTS_BASE_URL?.replace(/\/$/, "") ||
     process.env.NEXT_PUBLIC_TTS_BASE_URL?.replace(/\/$/, "") ||
@@ -10,20 +16,26 @@ function baseUrl(): string {
   );
 }
 
-export type StudioVoice = {
-  voice_id: string;
-  name: string;
-  type?: string;
-  language?: string | null;
-};
-
-/** Proxy VoiceStudio voice list (same-origin, no CORS). */
 export async function GET() {
-  const base = baseUrl();
+  if (fishApiKey()) {
+    const voices = await listFishVoices("fr");
+    const narratorId = fishNarratorId();
+    const preferred =
+      voices.find((v) => v.voice_id === narratorId) || voices[0] || null;
+    return NextResponse.json({
+      engine: "fish",
+      voices,
+      preferred: preferred
+        ? { voice_id: preferred.voice_id, name: preferred.name }
+        : null,
+      characterVoices: voices.filter((v) => v.voice_id !== preferred?.voice_id),
+    });
+  }
+
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5000);
-    const res = await fetch(`${base}/audio/voices`, {
+    const res = await fetch(`${studioBase()}/audio/voices`, {
       method: "GET",
       signal: ctrl.signal,
       headers: { Authorization: "Bearer none" },
@@ -31,32 +43,16 @@ export async function GET() {
     clearTimeout(timer);
     if (!res.ok) {
       return NextResponse.json(
-        { error: `VoiceStudio ${res.status}`, voices: [] },
+        { error: `VoiceStudio ${res.status}`, voices: [], engine: "voicestudio" },
         { status: 502 },
       );
     }
-    const data = (await res.json()) as { voices?: StudioVoice[] };
+    const data = (await res.json()) as { voices?: FishVoice[] };
     const voices = Array.isArray(data.voices) ? data.voices : [];
-    const preferred =
-      voices.find(
-        (v) =>
-          v.type === "profile" &&
-          v.name.trim().toLowerCase() === "mimir",
-      ) ||
-      voices.find(
-        (v) =>
-          v.type === "profile" &&
-          String(v.language || "")
-            .toLowerCase()
-            .startsWith("fr"),
-      ) ||
-      null;
-
     return NextResponse.json({
+      engine: "voicestudio",
       voices,
-      preferred: preferred
-        ? { voice_id: preferred.voice_id, name: preferred.name }
-        : null,
+      preferred: null,
       characterVoices: [],
     });
   } catch (e) {
@@ -65,6 +61,7 @@ export async function GET() {
         error: e instanceof Error ? e.message : "Voices injoignables",
         voices: [],
         preferred: null,
+        engine: null,
       },
       { status: 503 },
     );

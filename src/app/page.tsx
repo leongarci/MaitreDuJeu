@@ -46,26 +46,23 @@ export default function HomePage() {
       if (!data.ok) {
         setTtsHint(
           data.hint ||
-            `Injoignable (${data.base || "127.0.0.1:3900"}). Ouvre VoiceStudio et vérifie le backend.`,
+            "Fish Audio injoignable. Ajoute FISH_API_KEY (fish.audio/app/api-keys).",
         );
         return;
       }
       if (!data.speechReady && !playSample) {
-        setTtsHint(
-          data.hint ||
-            "API OK — tentative voix possible. Génère un test dans VoiceStudio si silence.",
-        );
+        setTtsHint(data.hint || "API OK — tu peux tester la voix.");
       }
       if (playSample) {
         const sample = await speakTestSample();
         if (sample.ok) {
           setTtsHint(
             sample.voiceName
-              ? `Voix OK — narrateur « ${sample.voiceName} » (VoiceStudio).`
-              : "Voix VoiceStudio OK.",
+              ? `Voix OK — narrateur « ${sample.voiceName} » (Fish Audio).`
+              : "Voix Fish Audio OK.",
           );
         } else {
-          setTtsHint(sample.error || "Échec VoiceStudio — pas de secours navigateur.");
+          setTtsHint(sample.error || "Échec Fish Audio.");
         }
       }
     } catch {
@@ -114,8 +111,8 @@ export default function HomePage() {
         </h1>
         <p className="mt-4 max-w-md text-sm leading-relaxed text-parchment-dim">
           {isDesktop
-            ? "Mode PC : sync Supabase + voix VoiceStudio (Mimir uniquement)."
-            : "Mode téléphone : hotseat, sync via code de partie (voix = VoiceStudio sur le PC hôte)."}
+            ? "Mode PC : sync Supabase + voix Fish Audio (narrateur et PNJ)."
+            : "Mode téléphone : hotseat, sync via code de partie (voix = Fish Audio sur le PC hôte)."}
         </p>
         {isDesktop && (
           <p className="mt-2 text-xs text-parchment-dim">
@@ -123,8 +120,8 @@ export default function HomePage() {
             {ttsOk === null
               ? "…"
               : ttsOk
-                ? "VoiceStudio (Mimir)"
-                : "VoiceStudio off — aucune voix"}
+                ? "Fish Audio"
+                : "Voix off — ajoute FISH_API_KEY"}
             {" · "}
             <button
               type="button"

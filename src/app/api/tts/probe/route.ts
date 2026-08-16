@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { fishApiKey, fishModel, probeFish } from "@/lib/tts/fish";
 
 export const runtime = "nodejs";
 
-function baseUrl(): string {
+function studioBase(): string {
   return (
     process.env.TTS_BASE_URL?.replace(/\/$/, "") ||
     process.env.NEXT_PUBLIC_TTS_BASE_URL?.replace(/\/$/, "") ||
@@ -10,126 +11,45 @@ function baseUrl(): string {
   );
 }
 
-/** Host without `/v1` — VoiceStudio also exposes `/health`, `/model/status`, `/engines`. */
-function studioRoot(base: string): string {
-  return base.replace(/\/v1\/?$/, "") || "http://127.0.0.1:3900";
-}
-
-type ModelStatus = {
-  status?: string;
-  loaded?: boolean;
-  loading?: boolean;
-  progress?: number;
-  detail?: string;
-  error?: string | null;
-};
-
-/**
- * Server-side probe — avoids browser CORS to VoiceStudio.
- * `ok` = API reachable. `speechReady` = model actually usable for /audio/speech.
- */
 export async function GET() {
-  const base = baseUrl();
-  const root = studioRoot(base);
-
-  let apiOk = false;
-  let via: string | null = null;
-  const endpoints = [`${base}/audio/voices`, `${root}/health`, base];
-  for (const url of endpoints) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 3000);
-      const res = await fetch(url, {
-        method: "GET",
-        signal: ctrl.signal,
-        headers: { Authorization: "Bearer none" },
-      });
-      clearTimeout(t);
-      if (res.ok || res.status === 405) {
-        apiOk = true;
-        via = url;
-        break;
-      }
-    } catch {
-      // try next
-    }
-  }
-
-  if (!apiOk) {
+  if (fishApiKey()) {
+    const fish = await probeFish();
     return NextResponse.json({
-      ok: false,
-      speechReady: false,
-      base,
-      hint: "Lance VoiceStudio (backend :3900), puis réessaie.",
+      ok: fish.ok,
+      speechReady: fish.speechReady,
+      engine: "fish",
+      model: fishModel(),
+      hint: fish.hint,
     });
   }
 
-  let model: ModelStatus | null = null;
-  let engine: string | null = null;
+  const base = studioBase();
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 3000);
-    const res = await fetch(`${root}/model/status`, {
+    const res = await fetch(`${base}/audio/voices`, {
       method: "GET",
       signal: ctrl.signal,
+      headers: { Authorization: "Bearer none" },
     });
     clearTimeout(t);
-    if (res.ok) model = (await res.json()) as ModelStatus;
-  } catch {
-    // optional
-  }
-
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 3000);
-    const res = await fetch(`${root}/engines`, {
-      method: "GET",
-      signal: ctrl.signal,
-    });
-    clearTimeout(t);
-    if (res.ok) {
-      const data = (await res.json()) as { tts?: { active?: string } };
-      engine = data.tts?.active ?? null;
+    if (res.ok || res.status === 405) {
+      return NextResponse.json({
+        ok: true,
+        speechReady: true,
+        engine: "voicestudio",
+        base,
+        hint: "Pas de FISH_API_KEY — secours VoiceStudio.",
+      });
     }
   } catch {
-    // optional
-  }
-
-  const loaded = Boolean(model?.loaded);
-  const stuckLoading =
-    Boolean(model?.loading) &&
-    !loaded &&
-    (model?.progress ?? 0) >= 100 &&
-    !model?.error;
-
-  // Only block when status explicitly says stuck. Unknown/missing status → try speech.
-  const speechReady = !stuckLoading && (model === null || loaded || !model.loading);
-
-  let hint: string | null = null;
-  if (stuckLoading) {
-    hint =
-      "VoiceStudio répond, mais le modèle OmniVoice est coincé (loading sans loaded). Ferme complètement VoiceStudio, relance-le, génère un clip test dans l’app, puis réessaie.";
-  } else if (model && !loaded && model.loading) {
-    hint =
-      "OmniVoice charge encore le modèle — génère un test dans VoiceStudio, ou patiente.";
+    // fall through
   }
 
   return NextResponse.json({
-    ok: true,
-    speechReady,
-    base,
-    via,
-    engine,
-    model: model
-      ? {
-          status: model.status ?? null,
-          loaded,
-          loading: Boolean(model.loading),
-          progress: model.progress ?? null,
-          detail: model.detail ?? null,
-          error: model.error ?? null,
-        }
-      : null,
-    hint,
+    ok: false,
+    speechReady: false,
+    engine: null,
+    hint: "Ajoute FISH_API_KEY (https://fish.audio/app/api-keys) ou lance VoiceStudio.",
   });
 }

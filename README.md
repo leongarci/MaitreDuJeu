@@ -10,8 +10,8 @@ PWA mobile (Next.js) — un téléphone, plusieurs joueurs en hotseat, un MJ IA.
 - Session hotseat + jets auto / manuel
 - Assets images / sons importés, déclenchés par le MJ
 - Illustrations de scène (Pollinations Flux) au changement de lieu, style adapté au scénario
-- Ambiance sonore Pollinations au changement de lieu (Pollen) ; voix narrateur VoiceStudio, secours / PNJ via Pollinations
-- Voix du MJ via synthèse vocale du navigateur (gratuit)
+- Ambiance sonore Pollinations au changement de lieu (Pollen)
+- Voix Fish Audio (narrateur + PNJ) — clé sur [fish.audio/app/api-keys](https://fish.audio/app/api-keys)
 
 ## Prérequis
 
@@ -22,9 +22,10 @@ PWA mobile (Next.js) — un téléphone, plusieurs joueurs en hotseat, un MJ IA.
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.0-flash
 POLLINATIONS_API_KEY=...
+FISH_API_KEY=...
 ```
 
-**Gemini** (MJ, free tier). **Pollinations** : clé `sk_…` sur [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys). Flux (images) est gratuit. L’audio (ambiance, voix de secours) consomme du [Pollen](https://github.com/pollinations/pollinations/blob/master/enter.pollinations.ai/POLLEN_FAQ.md) — si le solde est à sec, la partie continue sans son généré.
+**Gemini** (MJ). **Pollinations** (images Flux gratuites, ambiance en Pollen). **Fish Audio** (voix) : clé sur [fish.audio/app/api-keys](https://fish.audio/app/api-keys), modèle `s2.1-pro-free` par défaut. Une voix narrateur optionnelle : `FISH_NARRATOR_VOICE_ID` (id copié depuis [la bibliothèque](https://fish.audio)).
 
 ## Lancer
 
@@ -47,4 +48,4 @@ Ouvre [http://localhost:3000](http://localhost:3000) sur le navigateur ou le té
 - Next.js App Router + TypeScript + Tailwind
 - Zustand + Dexie
 - Google Gemini (MJ)
-- Web Speech API (voix gratuite du téléphone / navigateur)
+- Fish Audio (voix)

@@ -67,7 +67,7 @@ export const GM_CAPABILITIES: GmCapability[] = [
     id: "speech_lines",
     label: "Répliques vocales",
     description:
-      "Narrateur VoiceStudio (Mimir) ou Pollinations ; PNJ/PJ via Pollinations si speech_lines.",
+      "Voix Fish Audio (narrateur + PNJ/PJ si speech_lines). VoiceStudio seulement sans clé Fish.",
     when: "Toujours ; speech_lines optionnel",
   },
   {

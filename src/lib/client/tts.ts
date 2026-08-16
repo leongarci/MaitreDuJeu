@@ -1,6 +1,5 @@
-/** TTS: VoiceStudio (Mimir) + secours / répliques Pollinations. */
+/** TTS: Fish Audio (voix) — VoiceStudio seulement si pas de FISH_API_KEY. */
 
-import { speakPollinationsLine } from "@/lib/client/pollinations-tts";
 import type { SpeechLine } from "@/lib/types";
 import {
   DEFAULT_NARRATOR_VOICE_NAME,
@@ -10,6 +9,7 @@ import {
   speakLocalLine,
   stopLocalAudio,
   unlockAudio,
+  voiceIdForSpeaker,
 } from "@/lib/client/tts-local";
 
 let speaking = false;
@@ -30,11 +30,6 @@ export function planSpeechLines(
   return [{ speaker: "narrator", text }];
 }
 
-function isNarrator(speaker: string): boolean {
-  const s = speaker.trim().toLowerCase();
-  return !s || s === "narrator" || s === "mj" || s === "narrateur";
-}
-
 export function stopTts(): void {
   stopLocalAudio();
   speaking = false;
@@ -45,10 +40,9 @@ export async function refreshLocalTtsProbe(): Promise<boolean> {
   return detail.ok || detail.speechReady;
 }
 
-/** Speak a short sample immediately (call from a click handler). */
 export async function speakTestSample(): Promise<{
   ok: boolean;
-  via: "local";
+  via: "fish" | "local";
   error?: string;
   hint?: string;
   voiceName?: string;
@@ -61,23 +55,23 @@ export async function speakTestSample(): Promise<{
   if (!detail.ok && !detail.speechReady) {
     lastError =
       detail.hint ||
-      "VoiceStudio / OmniVoice pas prêt. Lance VoiceStudio et génère un test dedans.";
-    return { ok: false, via: "local", error: lastError, hint: detail.hint || undefined };
+      "Fish Audio pas prêt. Ajoute FISH_API_KEY (https://fish.audio/app/api-keys).";
+    return { ok: false, via: "fish", error: lastError, hint: detail.hint || undefined };
   }
 
   await ensureVoiceCast();
   const voiceId = await ensureNarratorVoiceId();
   const result = await speakLocalLine(
-    "Test de voix. Je suis Mimir, le maître du jeu.",
+    "Test de voix. Je suis le maître du jeu.",
     voiceId,
   );
   if (!result.ok) {
-    lastError = result.error || "Échec VoiceStudio";
-    return { ok: false, via: "local", error: lastError };
+    lastError = result.error || "Échec Fish Audio";
+    return { ok: false, via: "fish", error: lastError };
   }
   return {
     ok: true,
-    via: "local",
+    via: detail.engine === "voicestudio" ? "local" : "fish",
     voiceName: DEFAULT_NARRATOR_VOICE_NAME,
   };
 }
@@ -85,7 +79,7 @@ export async function speakTestSample(): Promise<{
 export async function speakNarration(
   text: string,
   muted: boolean,
-  _lines?: SpeechLine[] | null,
+  lines?: SpeechLine[] | null,
 ): Promise<void> {
   if (muted || !text.trim()) return;
   if (typeof window === "undefined") return;
@@ -95,34 +89,23 @@ export async function speakNarration(
   speaking = true;
   await unlockAudio();
 
-  const planned = planSpeechLines(text, _lines);
+  const planned = planSpeechLines(text, lines);
   const detail = await probeLocalTtsDetail();
-  const localReady = detail.ok || detail.speechReady;
-  if (localReady) {
-    await ensureVoiceCast();
+  if (!detail.ok && !detail.speechReady) {
+    lastError =
+      detail.hint ||
+      "Fish Audio indisponible. Vérifie FISH_API_KEY.";
+    speaking = false;
+    return;
   }
-  const voiceId = localReady ? await ensureNarratorVoiceId() : "";
 
   try {
     for (const line of planned) {
       if (!speaking) return;
-      if (isNarrator(line.speaker) && localReady) {
-        const result = await speakLocalLine(line.text, voiceId);
-        if (result.ok) continue;
-        const fallback = await speakPollinationsLine(line.text, "narrator");
-        if (!fallback.ok) {
-          lastError = result.error || fallback.error || "Échec voix";
-        }
-        continue;
-      }
-      const spoken = await speakPollinationsLine(line.text, line.speaker);
-      if (!spoken.ok) {
-        if (isNarrator(line.speaker) && localReady) {
-          const result = await speakLocalLine(line.text, voiceId);
-          if (!result.ok) lastError = spoken.error || result.error || "Échec voix";
-        } else {
-          lastError = spoken.error || "Échec voix Pollinations";
-        }
+      const voiceId = await voiceIdForSpeaker(line.speaker);
+      const result = await speakLocalLine(line.text, voiceId);
+      if (!result.ok) {
+        lastError = result.error || "Échec voix";
       }
     }
   } finally {

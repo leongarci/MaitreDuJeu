@@ -6,6 +6,7 @@ let activeSources: AudioBufferSourceNode[] = [];
 let playbackGeneration = 0;
 let audioUnlocked = false;
 let voiceCatalogPromise: Promise<StudioVoice[]> | null = null;
+let preferredNarratorId: string | null = null;
 
 /** Client must wait longer than the server speech proxy (90s). */
 const SPEECH_TIMEOUT_MS = 120_000;
@@ -14,9 +15,9 @@ const SINGLE_SHOT_MAX_CHARS = 3200;
 /** Fallback chunks: large enough that next fetch finishes during playback. */
 const CHUNK_MAX_CHARS = 1100;
 
-/** Unique voix : profil Mimir (VoiceStudio). */
-export const DEFAULT_NARRATOR_VOICE_ID = "8777577e";
-export const DEFAULT_NARRATOR_VOICE_NAME = "Mimir";
+/** Narrateur Fish Audio (surchageable via FISH_NARRATOR_VOICE_ID). */
+export const DEFAULT_NARRATOR_VOICE_ID = "ca3007f96ae7499ab87d27ea3599956a";
+export const DEFAULT_NARRATOR_VOICE_NAME = "Narrateur";
 
 export type LocalTtsProbe = {
   ok: boolean;
@@ -37,6 +38,8 @@ const LEGACY_NARRATOR_VOICE_IDS = new Set([
   "demo0001",
   "alloy",
   "e4bf2d65",
+  "8777577e",
+  "5e9fff91",
 ]);
 
 export function getNarratorVoiceId(): string {
@@ -57,7 +60,11 @@ async function loadStudioVoices(): Promise<StudioVoice[]> {
     voiceCatalogPromise = (async () => {
       try {
         const res = await fetch("/api/tts/voices");
-        const data = (await res.json()) as { voices?: StudioVoice[] };
+        const data = (await res.json()) as {
+          voices?: StudioVoice[];
+          preferred?: { voice_id?: string } | null;
+        };
+        if (data.preferred?.voice_id) preferredNarratorId = data.preferred.voice_id;
         return Array.isArray(data.voices) ? data.voices : [];
       } catch {
         return [];
@@ -67,18 +74,38 @@ async function loadStudioVoices(): Promise<StudioVoice[]> {
   return voiceCatalogPromise;
 }
 
-/** Resolve Mimir from VoiceStudio profiles. */
+/** Prefer the API's narrator (Fish), else first listed voice. */
 export async function ensureVoiceCast(): Promise<void> {
   if (typeof window === "undefined") return;
   const voices = await loadStudioVoices();
-  const mimir = voices.find(
-    (v) =>
-      v.type === "profile" && v.name.trim().toLowerCase() === "mimir",
-  );
-  const nextId = mimir?.voice_id || DEFAULT_NARRATOR_VOICE_ID;
+  const nextId =
+    preferredNarratorId ||
+    voices.find((v) => v.type === "fish")?.voice_id ||
+    voices[0]?.voice_id ||
+    DEFAULT_NARRATOR_VOICE_ID;
   if (localStorage.getItem("mdj_tts_narrator_voice") !== nextId) {
     setNarratorVoiceId(nextId);
   }
+}
+
+function hashSpeaker(speaker: string): number {
+  let h = 0;
+  for (let i = 0; i < speaker.length; i++) {
+    h = (h * 31 + speaker.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
+
+export async function voiceIdForSpeaker(speaker: string): Promise<string> {
+  const voices = await loadStudioVoices();
+  const narrator = await ensureNarratorVoiceId();
+  const key = speaker.trim().toLowerCase();
+  if (!key || key === "narrator" || key === "mj" || key === "narrateur") {
+    return narrator;
+  }
+  const pool = voices.filter((v) => v.voice_id !== narrator);
+  if (!pool.length) return narrator;
+  return pool[hashSpeaker(key) % pool.length]!.voice_id;
 }
 
 export async function ensureNarratorVoiceId(): Promise<string> {
