@@ -2340,7 +2340,6 @@ async function maybeGenerateLocationAmbient(opts: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        kind: "sfx",
         prompt: buildAmbientPrompt(
           opts.hint,
           opts.title,

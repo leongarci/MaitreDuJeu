@@ -6,6 +6,33 @@ import {
 } from "@/lib/sync/snapshot";
 import { normalizeJoinCode } from "@/lib/sync/server";
 
+function missingColumn(message: string): string | null {
+  const match =
+    message.match(/Could not find the '([^']+)' column/i) ||
+    message.match(/column "([^"]+)" of relation/i) ||
+    message.match(/column "([^"]+)" does not exist/i);
+  return match?.[1] ?? null;
+}
+
+async function upsertCampaignRow(
+  admin: SupabaseClient,
+  row: Record<string, unknown>,
+): Promise<void> {
+  let payload: Record<string, unknown> = { ...row };
+  for (let i = 0; i < 6; i++) {
+    const { error } = await admin.from("campaigns").upsert(payload);
+    if (!error) return;
+    const col = missingColumn(error.message);
+    if (!col || !(col in payload)) {
+      throw new Error(error.message);
+    }
+    const next = { ...payload };
+    delete next[col];
+    payload = next;
+  }
+  throw new Error("campaigns: trop de colonnes inconnues");
+}
+
 function dedupeById<T extends { id: string }>(rows: T[]): T[] {
   const map = new Map<string, T>();
   for (const row of rows) {
@@ -36,8 +63,7 @@ export async function pushSnapshot(
   const graphEdges = dedupeById(snap.graphEdges);
   const pdfChunks = dedupeById(snap.pdfChunks);
 
-  const { error: cErr } = await admin.from("campaigns").upsert(row);
-  if (cErr) throw new Error(cErr.message);
+  await upsertCampaignRow(admin, row);
 
   const wipe = async (table: string) => {
     const { error } = await admin.from(table).delete().eq("campaign_id", campaignId);

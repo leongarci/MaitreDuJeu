@@ -10,7 +10,7 @@ PWA mobile (Next.js) — un téléphone, plusieurs joueurs en hotseat, un MJ IA.
 - Session hotseat + jets auto / manuel
 - Assets images / sons importés, déclenchés par le MJ
 - Illustrations de scène (Pollinations Flux) au changement de lieu, style adapté au scénario
-- Ambiance sonore Pollinations au changement de lieu (Pollen)
+- Ambiance instrumentale MiniMax au changement de lieu
 - Voix Fish Audio (narrateur + PNJ) — clé sur [fish.audio/app/api-keys](https://fish.audio/app/api-keys)
 
 ## Prérequis
@@ -23,9 +23,10 @@ GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.0-flash
 POLLINATIONS_API_KEY=...
 FISH_API_KEY=...
+MINIMAX_API_KEY=...
 ```
 
-**Gemini** (MJ). **Pollinations** (images Flux gratuites, ambiance en Pollen). **Fish Audio** (voix) : clé sur [fish.audio/app/api-keys](https://fish.audio/app/api-keys), modèle `s2.1-pro-free` par défaut. Une voix narrateur optionnelle : `FISH_NARRATOR_VOICE_ID` (id copié depuis [la bibliothèque](https://fish.audio)).
+**Gemini** (MJ). **Pollinations** (images Flux). **Fish Audio** (voix). **MiniMax** (ambiance instrumentale, `music-3.0-free`) : clé sur [platform.minimax.io](https://platform.minimax.io/user-center/basic-information/interface-key).
 
 ## Lancer
 

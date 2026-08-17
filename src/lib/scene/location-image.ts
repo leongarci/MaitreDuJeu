@@ -97,11 +97,11 @@ export function buildAmbientPrompt(
 ): string {
   const place = hint.trim() || title.trim() || "adventure";
   return [
-    "loopable ambient soundscape, 10 seconds, seamless, background only",
+    "instrumental background music for a tabletop RPG scene, loop-friendly, no vocals, no lyrics, no speech",
     ambientLook,
-    place,
+    `setting: ${place}`,
   ]
     .filter(Boolean)
     .join(", ")
-    .slice(0, 400);
+    .slice(0, 1800);
 }

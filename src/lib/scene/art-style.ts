@@ -173,25 +173,25 @@ const IMAGE_LOOK: Record<ArtStyleId, string> = {
 
 const AMBIENT_LOOK: Record<ArtStyleId, string> = {
   "medieval-parchment":
-    "medieval fantasy ambience, wood, fire, distant wind, no melody, no lyrics, no speech",
+    "instrumental medieval fantasy underscore, lute and low drone, tavern warmth, no vocals",
   "high-fantasy":
-    "mythic outdoor ambience, wind in banners, distant creatures, no melody, no speech",
+    "instrumental mythic orchestral underscore, soft strings and winds, no vocals",
   space:
-    "spaceship interior ambience, low engine hum, vents, soft computer ticks, no speech, no music",
+    "instrumental sci-fi ambient score, slow pads, distant pulses, no vocals",
   cyberpunk:
-    "rainy neon city ambience, distant traffic, electric buzz, no lyrics, no speech",
+    "instrumental darksynth underscore, rain-soaked neon mood, no vocals",
   horror:
-    "uneasy horror ambience, distant drips, low drone, wood creaks, no speech, no melody",
+    "instrumental horror drone, uneasy strings, sparse percussion, no vocals",
   western:
-    "dry western town ambience, wind, wood, distant horse, no speech, no melody",
+    "instrumental dusty western score, guitar and harmonica hints, no vocals",
   modern:
-    "quiet urban room ambience, distant city, HVAC, no speech, no music",
+    "instrumental quiet contemporary underscore, muted piano, no vocals",
   nautical:
-    "wooden ship ambience, creaking hull, waves, ropes, no speech, no shanty",
+    "instrumental sea shanty-free nautical score, accordion and low strings, no vocals",
   steampunk:
-    "steam workshop ambience, pipes, gears, boilers, no speech, no melody",
+    "instrumental industrial Victorian score, brass and clockwork rhythm, no vocals",
   "post-apo":
-    "wasteland wind ambience, debris, distant metal, no speech, no music",
+    "instrumental desolate wasteland score, sparse guitar and wind pads, no vocals",
 };
 
 export function isArtStyleId(value: string | null | undefined): value is ArtStyleId {
